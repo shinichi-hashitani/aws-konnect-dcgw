@@ -1,0 +1,121 @@
+# PREREQUISITES — 事前準備・必要権限・テスト環境
+
+このドキュメントは、本リポジトリを実行する前に必要なツール・アカウント・権限と、
+テスト用 VPC / アプリ (httpbin) の構成を説明します。
+
+## 1. 必要なツール
+
+| ツール | バージョン | 用途 |
+|--------|-----------|------|
+| Terraform | >= 1.5 | インフラ構築 |
+| AWS CLI | 任意（推奨） | 認証確認・接続検証 |
+| Git | 任意 | リポジトリ管理 |
+
+## 2. アカウント
+
+### AWS アカウント
+- テスト VPC、ECS Fargate、Transit Gateway、RAM 共有を作成します。
+- DCGW のデータプレーンは Kong 管理の別 AWS アカウントに作成されるため、
+  ユーザー側アカウントには **作成されません**（TGW で接続するのみ）。
+
+### Kong Konnect アカウント
+- Personal Access Token (PAT) を発行します。
+  - 取得: <https://cloud.konghq.com/> → アカウントメニュー → **Personal Access Tokens**
+  - `.env` の `KONNECT_TOKEN` に設定します（konnect provider が自動的に読み込みます）。
+- 対象組織で **Dedicated Cloud Gateways** が利用可能なプランであること。
+- Konnect とクラウドプロバイダ (AWS) のリンクが済んでいること
+  （`konnect_cloud_gateway_provider_account_list` データソースで AWS プロバイダ
+  アカウントが 1 件以上返る必要があります）。
+
+## 3. 認証情報の渡し方
+
+すべて `.env`（`.env.example` をコピー）で環境変数として渡します。
+
+```bash
+cp .env.example .env
+# 値を設定
+set -a; source .env; set +a
+```
+
+| 変数 | 説明 |
+|------|------|
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` (`/ AWS_SESSION_TOKEN`) | AWS 認証情報。または `AWS_PROFILE` |
+| `AWS_REGION` | デプロイ先リージョン（`var.aws_region` と一致させる） |
+| `KONNECT_TOKEN` | Konnect Personal Access Token |
+| `KONNECT_SERVER_URL` | Konnect API エンドポイント（geo 別） |
+| `TF_VAR_kong_ram_principal_account_id` | RAM 共有先の Kong 管理 AWS アカウント ID（後述） |
+
+> 秘匿情報を `terraform.tfvars` に書かないでください。`.env`（環境変数）経由を推奨します。
+
+## 4. 必要な AWS IAM 権限
+
+作業者の IAM プリンシパルには、最低限以下の操作権限が必要です。検証環境では
+管理者相当でも構いませんが、最小権限で運用する場合の目安を示します。
+
+### VPC / ネットワーキング
+- `ec2:*Vpc*`, `ec2:*Subnet*`, `ec2:*RouteTable*`, `ec2:*Route`, `ec2:*InternetGateway*`
+- `ec2:*NatGateway*`, `ec2:*Address*` (EIP), `ec2:*SecurityGroup*`
+- `ec2:Describe*`
+
+### Transit Gateway
+- `ec2:CreateTransitGateway`, `ec2:DeleteTransitGateway`, `ec2:DescribeTransitGateways`
+- `ec2:CreateTransitGatewayVpcAttachment`, `ec2:DeleteTransitGatewayVpcAttachment`,
+  `ec2:DescribeTransitGatewayVpcAttachments`, `ec2:AcceptTransitGatewayVpcAttachment`
+- `ec2:*TransitGatewayRouteTable*`, `ec2:*TransitGatewayAttachment*` (Describe 含む)
+
+### AWS RAM（TGW を Kong アカウントへ共有）
+- `ram:CreateResourceShare`, `ram:DeleteResourceShare`, `ram:UpdateResourceShare`
+- `ram:AssociateResourceShare`, `ram:DisassociateResourceShare`
+- `ram:GetResourceShares`, `ram:ListPrincipals`, `ram:ListResources`
+- `ram:EnableSharingWithAwsOrganization`（外部プリンシパル共有を使うため `allow_external_principals = true` を設定済み。Organizations を使う場合のみ必要）
+
+### ECS / ALB / IAM / ログ（テストアプリ）
+- `ecs:*`（クラスタ・タスク定義・サービス）
+- `elasticloadbalancing:*`（ALB・ターゲットグループ・リスナー）
+- `iam:CreateRole`, `iam:DeleteRole`, `iam:AttachRolePolicy`, `iam:DetachRolePolicy`,
+  `iam:PassRole`, `iam:GetRole`, `iam:TagRole`
+- `logs:CreateLogGroup`, `logs:DeleteLogGroup`, `logs:PutRetentionPolicy`, `logs:DescribeLogGroups`
+
+> **Transit Gateway の RAM 共有に関する権限がポイントです。** TGW を Kong 管理
+> アカウントへ RAM 共有するには上記 `ram:*` と `ec2:*TransitGateway*` 権限が必要です。
+> Kong 側はこの共有を受けて TGW へアタッチメントを作成します。詳細は
+> [NETWORKING.md](./NETWORKING.md) を参照してください。
+
+## 5. テスト用 VPC とアプリ (httpbin) について
+
+`modules/test_app_vpc` が作成するリソース:
+
+- **VPC** (`var.test_vpc_cidr_block`、既定 `10.1.0.0/16`)
+- **サブネット**: `var.availability_zone_ids` の各 AZ に public / private を 1 つずつ
+  - public: NAT Gateway 配置・IGW 経由の egress
+  - private: ECS タスクと内部 ALB を配置
+- **NAT Gateway × 1**: private サブネットからの egress（コンテナイメージ取得用）
+- **内部 ALB**: `internal = true`。Kong データプレーンから TGW 経由でアクセスされる
+- **ECS Fargate サービス**: `var.test_app_image`（既定 `kennethreitz/httpbin:latest`）を
+  ポート `var.test_app_container_port`（既定 80）で起動
+- **セキュリティグループ**:
+  - ALB SG: `var.network_cidr_block`（Kong 網）とテスト VPC CIDR から該当ポートを許可
+  - Task SG: ALB SG からのみ該当ポートを許可
+- **CloudWatch Logs**: コンテナログ（`/ecs/<prefix>-app`、保持 14 日）
+
+### httpbin の差し替え
+将来 httpbin から別 API へ変更する場合は、`var.test_app_image` /
+`var.test_app_container_port` / `var.test_app_health_check_path` を変更して
+`terraform apply` するだけです。httpbin のヘルスチェックは既定で `/get`（200 応答）を使用します。
+
+### アクセス経路
+Kong のデータプレーン → TGW → テスト VPC の内部 ALB → ECS Fargate (httpbin)。
+ALB は内部向けのため、インターネットからは直接アクセスできません。Kong の
+サービス upstream には ALB の DNS 名（`terraform output test_app_alb_dns_name`）を
+指定します。
+
+## 6. リージョン・AZ に関する注意
+
+- 既定リージョンは `ap-northeast-1`（東京）です。**対象リージョンで DCGW が
+  サポートされているか必ず確認してください。** 非対応の場合は `aws_region` と
+  `availability_zone_ids` を変更します（例: `us-east-2` / `["use2-az1","use2-az2"]`）。
+- `availability_zone_ids` は **AZ-ID 形式**（`apne1-az1` など）で指定します。AZ 名
+  （`ap-northeast-1a`）ではない点に注意してください。
+- `control_plane_geo` と `konnect_server_url` の geo は一致させてください
+  （既定は `us` / `https://us.api.konghq.com`）。コントロールプレーンの geo は
+  データプレーンのリージョンとは独立です。

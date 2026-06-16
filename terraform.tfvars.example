@@ -1,0 +1,35 @@
+# =============================================================================
+# terraform.tfvars.example
+#
+# 必要に応じて terraform.tfvars にコピーして上書きしてください:
+#   cp terraform.tfvars.example terraform.tfvars
+#
+# 秘匿情報 (トークン / AWS キー / Kong アカウント ID) は terraform.tfvars には
+# 書かず、.env の環境変数 (KONNECT_TOKEN, AWS_*, TF_VAR_kong_ram_principal_account_id)
+# で渡すことを推奨します。terraform.tfvars は .gitignore 済みです。
+# =============================================================================
+
+project_name = "konnect-dcgw"
+aws_region   = "ap-northeast-1"
+
+# Konnect
+konnect_server_url = "https://us.api.konghq.com"
+control_plane_geo  = "us"
+gateway_version    = "3.11"
+api_access         = "private+public"
+base_rps           = 100
+
+# AZ は AZ-ID 形式で指定 (AZ 名ではない)
+availability_zone_ids = ["apne1-az1", "apne1-az4"]
+
+# CIDR (相互に重複しないこと)
+network_cidr_block  = "10.0.0.0/16"
+test_vpc_cidr_block = "10.1.0.0/16"
+
+# テストアプリ
+test_app_image          = "kennethreitz/httpbin:latest"
+test_app_container_port = 80
+
+# kong_ram_principal_account_id は .env (TF_VAR_*) 経由での指定を推奨。
+# ここに直接書く場合はコミットしないよう注意:
+# kong_ram_principal_account_id = "123456789012"
