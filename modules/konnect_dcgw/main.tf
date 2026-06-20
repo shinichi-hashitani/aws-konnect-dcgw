@@ -15,8 +15,10 @@ terraform {
 data "konnect_cloud_gateway_provider_account_list" "this" {}
 
 locals {
-  aws_provider_account_id = one([
-    for a in data.konnect_cloud_gateway_provider_account_list.this.data : a.provider_account_id
+  # cloud_gateway_provider_account_id には Konnect 内部の UUID (data[].id) を渡す。
+  # data[].provider_account_id は AWS アカウント番号 (例 5901...) であり別物なので使わない。
+  konnect_provider_account_id = one([
+    for a in data.konnect_cloud_gateway_provider_account_list.this.data : a.id
     if a.provider == "aws"
   ])
 
@@ -44,7 +46,7 @@ resource "konnect_cloud_gateway_network" "this" {
   region                            = var.aws_region
   availability_zones                = var.availability_zone_ids
   cidr_block                        = var.network_cidr_block
-  cloud_gateway_provider_account_id = local.aws_provider_account_id
+  cloud_gateway_provider_account_id = local.konnect_provider_account_id
 }
 
 # -----------------------------------------------------------------------------
