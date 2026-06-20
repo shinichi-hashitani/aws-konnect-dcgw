@@ -52,9 +52,9 @@ variable "control_plane_geo" {
 }
 
 variable "gateway_version" {
-  description = "Dedicated Cloud Gateway のデータプレーン Kong Gateway バージョン"
+  description = "Dedicated Cloud Gateway のデータプレーン Kong Gateway バージョン (利用可能版は availability.json で確認)"
   type        = string
-  default     = "3.11"
+  default     = "3.14"
 }
 
 variable "api_access" {
