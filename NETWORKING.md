@@ -38,22 +38,57 @@ DCGW のデータプレーンは **Kong 管理の AWS アカウント**内の VP
 
 ## 2. CIDR 設計
 
+### 2.1 定義（既定値）
+
 | 用途 | 変数 | 既定値 | 制約 |
 |------|------|--------|------|
-| Kong 管理ネットワーク VPC | `network_cidr_block` | `10.0.0.0/23` | prefix は **/16〜/23**。2 AZ は最小 /23、3 AZ 以上は /22 以上 |
-| テスト VPC | `test_vpc_cidr_block` | `10.1.0.0/24` | サブネットを /26 で切り出すため 2 AZ では /24 が目安 |
+| Kong 管理ネットワーク VPC | `network_cidr_block` | `10.0.0.0/23` | prefix は **/16〜/23**（Kong 制約）。2 AZ は最小 /23 |
+| テスト VPC | `test_vpc_cidr_block` | `10.1.0.0/24` | AWS 通常 VPC。サブネットを /26 で切り出すため 2 AZ では /24 が目安 |
 
 - 2 つの CIDR は **重複してはいけません**。
-- **Kong ネットワークの CIDR は /26 にできません。** Kong Cloud Gateway ネットワークは
-  prefix /16〜/23 のみ許可され、AZ 数に応じて最小サイズが決まります
-  （2 AZ=/23, 3〜4 AZ=/22, 5 AZ=/21）。`variables.tf` にこの範囲のバリデーションを実装済みです。
-- テスト VPC のサブネットは各 AZ の public / private を **/26** で切り出します
-  （`/24` VPC + 2 AZ で public 2 個・private 2 個が `/24` を使い切る配置）。
 - `konnect_cloud_gateway_transit_gateway.aws_transit_gateway.cidr_blocks` には
   「Kong データプレーンがルートする宛先 = テスト VPC の CIDR」を渡します
   （本構成では `[test_vpc_cidr_block]`）。
 
-参考: [Dedicated Cloud Gateways reference — VPC CIDR 要件](https://developer.konghq.com/dedicated-cloud-gateways/reference/)
+### 2.2 Kong 側の最小 CIDR サイズ制限（根拠）
+
+**Kong Cloud Gateway ネットワークの CIDR は prefix `/16`〜`/23` の範囲のみ許可されます。**
+さらに、使用する **アベイラビリティゾーン (AZ) 数に応じて最小サイズ** が決まります。
+データプレーンが各 AZ のサブネットへ分散配置され、オートスケール用の IP も確保するため、
+小さすぎる CIDR（例: `/24` や `/26`）は API に拒否されます。
+
+| AZ 数 | 最小 CIDR | 利用可能 IP |
+|------|----------|------------|
+| 2 | **/23** | 512 |
+| 3 | /22 | 1,024 |
+| 4 | /22 | 1,024 |
+| 5 | /21 | 2,048 |
+
+> 補足: `/23` ブロックは最大 3 AZ までサポート（4 AZ 以上は `/22` 以上が必要）。
+> サブネットマスクは CSP 側でも最小 /28・最大 /16 の制限があります。
+
+このため、本構成では Kong ネットワークを **`/26` ではなく許可範囲で最小の `/23`** に
+設定しています。範囲外（/24 など）を指定すると Kong API に拒否されるため、
+[`variables.tf`](../variables.tf) の `network_cidr_block` に **prefix /16〜/23 を強制する
+バリデーション** を実装しています（誤設定を plan 時に early-fail）。
+
+出典: [Dedicated Cloud Gateways reference — VPC CIDR 要件](https://developer.konghq.com/dedicated-cloud-gateways/reference/)
+
+### 2.3 テスト VPC のサブネット割当
+
+テスト VPC のサブネットは各 AZ の public / private を **/26** で切り出します
+（`modules/test_app_vpc` が VPC prefix から `/26` までの newbits を算出）。
+既定の `/24` + 2 AZ では以下のように `/24` を過不足なく使い切ります。
+
+| サブネット | AZ | CIDR | 用途 |
+|-----------|----|------|------|
+| public  | apne1-az1 | `10.1.0.0/26` | NAT Gateway / IGW egress |
+| public  | apne1-az4 | `10.1.0.64/26` | NAT Gateway / IGW egress |
+| private | apne1-az1 | `10.1.0.128/26` | ECS Fargate / 内部 ALB |
+| private | apne1-az4 | `10.1.0.192/26` | ECS Fargate / 内部 ALB |
+
+> AZ 数を増やす場合はテスト VPC を `/24` より大きくしてください（`/24` には /26 が 4 つ
+> しか入らないため、3 AZ 以上では public/private 合計が収まりません）。
 
 ## 3. ルーティング
 

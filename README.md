@@ -71,10 +71,21 @@ AWS Transit Gateway 経由でテスト用 API (httpbin) を配置した VPC と�
 
 ### 1. 認証情報の設定
 
+AWS は **IAM Identity Center (AWS SSO)** のプロファイルを使用します。
+
 ```bash
+# 初回のみ: SSO プロファイルを設定 (start URL / リージョン / アカウント・ロール / プロファイル名)
+aws configure sso            # 例: profile name = konnect-dcgw
+
 cp .env.example .env
-# .env を編集し AWS / Konnect の認証情報を設定
+# .env を編集: AWS_PROFILE に上で付けたプロファイル名、Konnect の KONNECT_TOKEN 等を設定
 set -a; source .env; set +a
+
+# 作業のたびにログイン (トークン期限切れ時も再実行)
+aws sso login --profile "$AWS_PROFILE"
+
+# 認証確認 (アカウント ID が返れば OK)
+aws sts get-caller-identity
 ```
 
 必要に応じて変数を上書き:
@@ -125,6 +136,9 @@ set -a; source .env; set +a
 ### 5. 2 段階目の apply（TGW 接続を確立）
 
 ```bash
+# SSO トークンが失効していれば再ログイン
+aws sso login --profile "$AWS_PROFILE"
+
 terraform apply
 ```
 

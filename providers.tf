@@ -1,9 +1,10 @@
 provider "aws" {
   region = var.aws_region
 
-  # 認証情報は環境変数から読み込みます (.env 参照):
-  #   AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_SESSION_TOKEN
-  #   もしくは AWS_PROFILE
+  # 認証情報は IAM Identity Center (AWS SSO) のプロファイルを使用します。
+  # 環境変数 AWS_PROFILE で SSO プロファイルを指定し (.env 参照)、
+  # 事前に `aws sso login --profile <name>` でトークンを取得しておきます。
+  # AWS プロバイダは ~/.aws/config の SSO 設定と SSO キャッシュを自動的に読み込みます。
 
   default_tags {
     tags = var.tags

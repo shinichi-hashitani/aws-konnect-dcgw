@@ -8,8 +8,10 @@
 | ツール | バージョン | 用途 |
 |--------|-----------|------|
 | Terraform | >= 1.5 | インフラ構築 |
-| AWS CLI | 任意（推奨） | 認証確認・接続検証 |
+| AWS CLI | >= 2.x（必須） | IAM Identity Center (SSO) ログイン・認証確認・接続検証 |
 | Git | 任意 | リポジトリ管理 |
+
+> AWS CLI v2 は SSO ログイン (`aws sso login`) に必要です。
 
 ## 2. アカウント
 
@@ -17,6 +19,9 @@
 - テスト VPC、ECS Fargate、Transit Gateway、RAM 共有を作成します。
 - DCGW のデータプレーンは Kong 管理の別 AWS アカウントに作成されるため、
   ユーザー側アカウントには **作成されません**（TGW で接続するのみ）。
+- アクセスは **IAM Identity Center (AWS SSO) で定義したユーザー**で行います。
+  対象アカウントへのアクセス権を持つ permission set（後述の IAM 権限を満たすもの）が
+  割り当てられている必要があります。アクセスキーの常用は不要です。
 
 ### Kong Konnect アカウント
 - Personal Access Token (PAT) を発行します。
@@ -29,7 +34,47 @@
 
 ## 3. 認証情報の渡し方
 
-すべて `.env`（`.env.example` をコピー）で環境変数として渡します。
+### 3.1 AWS: IAM Identity Center (AWS SSO)
+
+アクセスキーではなく、IAM Identity Center のユーザーで SSO ログインします。
+
+```bash
+# 初回のみ: SSO プロファイルを対話設定
+aws configure sso
+#   SSO start URL     : https://<your-portal>.awsapps.com/start
+#   SSO region        : <Identity Center のリージョン>
+#   アカウント / ロール : 対象を選択
+#   CLI default region : ap-northeast-1
+#   profile name      : 例) konnect-dcgw
+
+# 作業のたびにログイン (SSO トークンは数時間で失効するため都度実行)
+aws sso login --profile konnect-dcgw
+
+# 認証確認
+aws sts get-caller-identity
+```
+
+`~/.aws/config` には次のようなプロファイルが作成されます（参考）:
+
+```ini
+[profile konnect-dcgw]
+sso_session = my-sso
+sso_account_id = 123456789012
+sso_role_name = AdministratorAccess
+region = ap-northeast-1
+
+[sso-session my-sso]
+sso_start_url = https://<your-portal>.awsapps.com/start
+sso_region = <Identity Center のリージョン>
+sso_registration_scopes = sso:account:access
+```
+
+Terraform / AWS プロバイダは環境変数 `AWS_PROFILE` でこのプロファイルを参照し、
+`aws sso login` で取得した SSO キャッシュを自動的に利用します。
+
+### 3.2 環境変数 (`.env`)
+
+その他は `.env`（`.env.example` をコピー）で環境変数として渡します。
 
 ```bash
 cp .env.example .env
@@ -39,13 +84,14 @@ set -a; source .env; set +a
 
 | 変数 | 説明 |
 |------|------|
-| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` (`/ AWS_SESSION_TOKEN`) | AWS 認証情報。または `AWS_PROFILE` |
+| `AWS_PROFILE` | 使用する IAM Identity Center (SSO) プロファイル名（`aws configure sso` で付けた名前） |
 | `AWS_REGION` | デプロイ先リージョン（`var.aws_region` と一致させる） |
 | `KONNECT_TOKEN` | Konnect Personal Access Token |
 | `KONNECT_SERVER_URL` | Konnect API エンドポイント（geo 別） |
 | `TF_VAR_kong_ram_principal_account_id` | RAM 共有先の Kong 管理 AWS アカウント ID（後述） |
 
 > 秘匿情報を `terraform.tfvars` に書かないでください。`.env`（環境変数）経由を推奨します。
+> SSO 方式ではアクセスキー／シークレットを `.env` に保存する必要はありません。
 
 ## 4. 必要な AWS IAM 権限
 
