@@ -83,15 +83,20 @@ variable "availability_zone_ids" {
 # =============================================================================
 
 variable "network_cidr_block" {
-  description = "Kong 管理の Cloud Gateway ネットワーク VPC の CIDR"
+  description = "Kong 管理の Cloud Gateway ネットワーク VPC の CIDR。Kong の制約により prefix は /16〜/23 (2 AZ は最小 /23)"
   type        = string
-  default     = "10.0.0.0/16"
+  default     = "10.0.0.0/23"
+
+  validation {
+    condition     = can(cidrhost(var.network_cidr_block, 0)) && tonumber(split("/", var.network_cidr_block)[1]) >= 16 && tonumber(split("/", var.network_cidr_block)[1]) <= 23
+    error_message = "network_cidr_block の prefix は /16〜/23 である必要があります (Kong Cloud Gateway ネットワークの制約)。"
+  }
 }
 
 variable "test_vpc_cidr_block" {
-  description = "テスト用 (httpbin) VPC の CIDR"
+  description = "テスト用 (httpbin) VPC の CIDR。サブネットは /26 で切り出すため 2 AZ では /24 が目安"
   type        = string
-  default     = "10.1.0.0/16"
+  default     = "10.1.0.0/24"
 }
 
 # =============================================================================

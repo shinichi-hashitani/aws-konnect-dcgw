@@ -10,9 +10,12 @@ terraform {
 locals {
   az_count = length(var.availability_zone_ids)
 
-  # /16 VPC を /20 サブネットに分割。public は先頭ブロック、private はオフセット。
-  public_subnet_cidrs  = [for i in range(local.az_count) : cidrsubnet(var.vpc_cidr, 4, i)]
-  private_subnet_cidrs = [for i in range(local.az_count) : cidrsubnet(var.vpc_cidr, 4, i + 8)]
+  # VPC を /26 サブネットに分割 (VPC prefix から /26 までの newbits を算出)。
+  # public を先頭、private を AZ 数ぶんオフセットして連続配置する。
+  # 例: /24 VPC + 2 AZ -> public 2 個・private 2 個の /26 で /24 を使い切る。
+  subnet_newbits       = 26 - tonumber(split("/", var.vpc_cidr)[1])
+  public_subnet_cidrs  = [for i in range(local.az_count) : cidrsubnet(var.vpc_cidr, local.subnet_newbits, i)]
+  private_subnet_cidrs = [for i in range(local.az_count) : cidrsubnet(var.vpc_cidr, local.subnet_newbits, i + local.az_count)]
 }
 
 # -----------------------------------------------------------------------------

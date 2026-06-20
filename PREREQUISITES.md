@@ -85,8 +85,8 @@ set -a; source .env; set +a
 
 `modules/test_app_vpc` が作成するリソース:
 
-- **VPC** (`var.test_vpc_cidr_block`、既定 `10.1.0.0/16`)
-- **サブネット**: `var.availability_zone_ids` の各 AZ に public / private を 1 つずつ
+- **VPC** (`var.test_vpc_cidr_block`、既定 `10.1.0.0/24`)
+- **サブネット**: `var.availability_zone_ids` の各 AZ に public / private を 1 つずつ（各 /26）
   - public: NAT Gateway 配置・IGW 経由の egress
   - private: ECS タスクと内部 ALB を配置
 - **NAT Gateway × 1**: private サブネットからの egress（コンテナイメージ取得用）

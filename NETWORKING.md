@@ -12,7 +12,7 @@ DCGW のデータプレーンは **Kong 管理の AWS アカウント**内の VP
 ```
 [Kong 管理アカウント]                         [自 AWS アカウント]
  Cloud Gateway ネットワーク VPC                 テスト VPC (httpbin)
-   (network_cidr_block 10.0.0.0/16)             (test_vpc_cidr_block 10.1.0.0/16)
+   (network_cidr_block 10.0.0.0/23)             (test_vpc_cidr_block 10.1.0.0/24)
             │                                          │
             │ ③ Kong がアタッチメント作成               │ ① TGW 作成 + VPC アタッチ
             │   (RAM 共有を受けて)                       │
@@ -38,15 +38,22 @@ DCGW のデータプレーンは **Kong 管理の AWS アカウント**内の VP
 
 ## 2. CIDR 設計
 
-| 用途 | 変数 | 既定値 |
-|------|------|--------|
-| Kong 管理ネットワーク VPC | `network_cidr_block` | `10.0.0.0/16` |
-| テスト VPC | `test_vpc_cidr_block` | `10.1.0.0/16` |
+| 用途 | 変数 | 既定値 | 制約 |
+|------|------|--------|------|
+| Kong 管理ネットワーク VPC | `network_cidr_block` | `10.0.0.0/23` | prefix は **/16〜/23**。2 AZ は最小 /23、3 AZ 以上は /22 以上 |
+| テスト VPC | `test_vpc_cidr_block` | `10.1.0.0/24` | サブネットを /26 で切り出すため 2 AZ では /24 が目安 |
 
 - 2 つの CIDR は **重複してはいけません**。
+- **Kong ネットワークの CIDR は /26 にできません。** Kong Cloud Gateway ネットワークは
+  prefix /16〜/23 のみ許可され、AZ 数に応じて最小サイズが決まります
+  （2 AZ=/23, 3〜4 AZ=/22, 5 AZ=/21）。`variables.tf` にこの範囲のバリデーションを実装済みです。
+- テスト VPC のサブネットは各 AZ の public / private を **/26** で切り出します
+  （`/24` VPC + 2 AZ で public 2 個・private 2 個が `/24` を使い切る配置）。
 - `konnect_cloud_gateway_transit_gateway.aws_transit_gateway.cidr_blocks` には
   「Kong データプレーンがルートする宛先 = テスト VPC の CIDR」を渡します
   （本構成では `[test_vpc_cidr_block]`）。
+
+参考: [Dedicated Cloud Gateways reference — VPC CIDR 要件](https://developer.konghq.com/dedicated-cloud-gateways/reference/)
 
 ## 3. ルーティング
 
@@ -66,7 +73,7 @@ private ルートテーブルに、Kong ネットワーク CIDR 宛のルート�
 （`modules/transit_gateway` の `aws_route.to_kong_network`）。
 
 ```
-宛先: 10.0.0.0/16 (network_cidr_block) → ターゲット: TGW
+宛先: 10.0.0.0/23 (network_cidr_block) → ターゲット: TGW
 ```
 
 ### Kong ネットワークレベル
