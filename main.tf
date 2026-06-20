@@ -18,9 +18,15 @@ module "konnect_dcgw" {
   api_access            = var.api_access
   base_rps              = var.base_rps
 
-  transit_gateway_id   = module.transit_gateway.transit_gateway_id
-  ram_share_arn        = module.transit_gateway.ram_share_arn
-  test_vpc_cidr_blocks = [var.test_vpc_cidr_block]
+  transit_gateway_id     = module.transit_gateway.transit_gateway_id
+  ram_share_arn          = module.transit_gateway.ram_share_arn
+  tgw_attachment_enabled = var.kong_ram_principal_account_id != ""
+  test_vpc_cidr_blocks   = [var.test_vpc_cidr_block]
+
+  # テストアプリ (httpbin) を DCGW 経由で公開する Service / Route
+  upstream_host = module.test_app_vpc.alb_dns_name
+  upstream_port = var.test_app_container_port
+  route_paths   = var.test_app_route_paths
 
   tags = var.tags
 }

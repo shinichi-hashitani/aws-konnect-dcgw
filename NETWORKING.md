@@ -179,16 +179,33 @@ DCGW のデータプレーンからテスト VPC の httpbin（内部 ALB）へ�
    # 例: internal-konnect-dcgw-test-alb-xxxx.ap-northeast-1.elb.amazonaws.com
    ```
 
-2. Konnect でサービス / ルートを作成し、上記 ALB を upstream に指定
-   （`http://<alb-dns-name>`、ポート 80）。
+2. サービス / ルートは Terraform で作成済み（`modules/konnect_dcgw` の
+   `konnect_gateway_service` / `konnect_gateway_route`、upstream = 内部 ALB、
+   パス = `var.test_app_route_paths`）。UI で作る場合は upstream に
+   `http://<alb-dns-name>`（ポート 80）を指定。
 
-3. DCGW の公開エンドポイント経由でリクエストし、httpbin の応答を確認:
+3. DCGW の公開エンドポイント（**Public Edge DNS**）経由でリクエストし、httpbin の応答を確認:
 
-   ```bash
-   curl https://<dcgw-public-endpoint>/<route-path>/get
-   ```
+   - **自前ドメインは不要**。Konnect が付与する **Public Edge DNS** を使います
+     （Custom Domains は自前ドメインを使う場合のみ・任意）。公開 FQDN は control plane の
+     `proxy_urls` には出ません。
+   - 形式: **`<CP プレフィックス>.gateways.konghq.com`**
+     （`control_plane_endpoint` = `https://<prefix>.<geo>.cp.konghq.com` の先頭ラベルから導出）。
+     リージョンのエッジ（例 `<prefix>.aws-ap-northeast-1.edge.gateways.konghq.com`）へ解決されます。
+   - UI でも確認可: Konnect → API Gateway → 対象コントロールプレーン → サイドバー
+     **Connect** → **Public Edge DNS**。
+   - 本リポジトリでは Terraform output から直接取得できます:
 
-   `/get` は httpbin がリクエスト情報を JSON で返すエンドポイントです。
+     ```bash
+     terraform output dcgw_public_edge_dns   # 例: e9f7281a29.gateways.konghq.com
+     terraform output dcgw_test_url          # 例: https://e9f7281a29.gateways.konghq.com/httpbin/get
+     curl "$(terraform output -raw dcgw_test_url)"
+     ```
+
+   - 成功例（経路の証跡）: レスポンスの `X-Kong-Request-Id`（Kong 通過）、
+     `Host: internal-...elb...`（内部 ALB へ転送）、`origin: ..., 10.0.0.x`
+     （Kong データプレーンの送信元が Kong 網 `10.0.0.0/23` = TGW 経路成立）。
+   - `/get` は httpbin がリクエスト情報を JSON で返すエンドポイントです。
 
 ### 疎通の切り分け
 - ALB のターゲットグループのヘルスが `healthy` か（AWS コンソール / `aws elbv2 describe-target-health`）。

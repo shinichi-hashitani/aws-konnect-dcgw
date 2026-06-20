@@ -30,6 +30,24 @@ output "test_app_alb_dns_name" {
   value       = module.test_app_vpc.alb_dns_name
 }
 
+output "konnect_gateway_route_paths" {
+  description = "DCGW で httpbin を公開するルートのパス"
+  value       = module.konnect_dcgw.route_paths
+}
+
+output "dcgw_public_edge_dns" {
+  description = "DCGW 公開エンドポイント (Public Edge DNS)。自前ドメイン不要。UI: Connect > Public Edge DNS と一致"
+  value       = module.konnect_dcgw.public_edge_dns
+}
+
+output "dcgw_test_url" {
+  description = "httpbin への疎通テスト URL (そのまま curl 可能)"
+  value = try(
+    "https://${module.konnect_dcgw.public_edge_dns}${module.konnect_dcgw.route_paths[0]}/get",
+    null
+  )
+}
+
 output "test_vpc_id" {
   description = "テスト VPC ID"
   value       = module.test_app_vpc.vpc_id

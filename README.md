@@ -122,7 +122,11 @@ Konnect UI で確認します（手順は [NETWORKING.md](./NETWORKING.md) 参�
 Konnect → Gateway Manager → Networks → 作成したネットワーク → 詳細
 ```
 
-確認した AWS アカウント ID を `.env` に設定し直します:
+Networks 画面では、ネットワークが `Ready` になっていること、および Network ID を確認できます。
+
+![Konnect Networks 画面（ネットワークが Ready 状態、Network ID を確認）](docs/images/konnect-networks-network_id.png)
+
+Configure private networkingのメニュー画面から、Transit Gateway attachmentを選択するとKong AWS Account IDが表示されます。このアカウント ID を `.env` に設定し直します:
 
 ```bash
 # .env
@@ -148,12 +152,17 @@ RAM 共有と `konnect_cloud_gateway_transit_gateway` が作成され、Kong 側
 
 ### 6. 接続確認
 
-接続確認とトラブルシュートは [NETWORKING.md](./NETWORKING.md) を参照してください。
-Kong のルート/サービスを設定する際は、upstream に内部 ALB の DNS 名を指定します:
+httpbin を公開する Kong Service / Route は Terraform で作成済みです
+（upstream = 内部 ALB、パス = `var.test_app_route_paths`）。DCGW の公開エンドポイント
+（**Public Edge DNS**、自前ドメイン不要）へリクエストして確認します:
 
 ```bash
-terraform output test_app_alb_dns_name
+terraform output dcgw_public_edge_dns   # 例: e9f7281a29.gateways.konghq.com
+curl "$(terraform output -raw dcgw_test_url)"   # 例: https://<edge>/httpbin/get
 ```
+
+httpbin の JSON が返れば **DCGW → TGW → 内部 ALB → httpbin** が成立しています。
+詳細・トラブルシュートは [NETWORKING.md](./NETWORKING.md) を参照してください。
 
 ## クリーンアップ
 

@@ -46,8 +46,18 @@ variable "transit_gateway_id" {
 }
 
 variable "ram_share_arn" {
-  description = "TGW を共有する RAM リソースシェアの ARN。空文字の場合 Konnect TGW を作成しない"
+  description = "TGW を共有する RAM リソースシェアの ARN (Konnect TGW リソースの引数)"
   type        = string
+}
+
+variable "tgw_attachment_enabled" {
+  description = <<-EOT
+    Konnect TGW アタッチメントを作成するか。RAM 共有先 Kong AWS アカウント ID が
+    設定済みかどうか (plan 時に確定する値) を渡す。ram_share_arn は apply 時まで
+    未確定なため count の判定には使えない。
+  EOT
+  type        = bool
+  default     = false
 }
 
 variable "test_vpc_cidr_blocks" {
@@ -59,4 +69,29 @@ variable "tags" {
   description = "タグ (Konnect 側でラベルとして使用)"
   type        = map(string)
   default     = {}
+}
+
+# --- テストアプリを公開する Gateway Service / Route ---
+
+variable "upstream_host" {
+  description = "Kong サービスの upstream ホスト名 (内部 ALB の DNS 名。scheme は含めない)"
+  type        = string
+}
+
+variable "upstream_protocol" {
+  description = "upstream プロトコル"
+  type        = string
+  default     = "http"
+}
+
+variable "upstream_port" {
+  description = "upstream ポート"
+  type        = number
+  default     = 80
+}
+
+variable "route_paths" {
+  description = "DCGW で公開するルートのパス"
+  type        = list(string)
+  default     = ["/httpbin"]
 }

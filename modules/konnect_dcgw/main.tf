@@ -22,7 +22,16 @@ locals {
     if a.provider == "aws"
   ])
 
-  tgw_enabled = var.ram_share_arn != ""
+  # count は plan 時に確定する必要があるため、apply 時まで未確定の ram_share_arn では
+  # なく、入力済みフラグ (tgw_attachment_enabled) で判定する。
+  tgw_enabled = var.tgw_attachment_enabled
+
+  # DCGW の公開エンドポイント (Public Edge DNS) を control plane endpoint から導出。
+  # 例: control_plane_endpoint=https://e9f7281a29.us.cp.konghq.com
+  #     -> 先頭ラベル e9f7281a29 -> e9f7281a29.gateways.konghq.com
+  # (UI の Connect > Public Edge DNS と一致。UI が一次情報、これは利便のための導出値)
+  cp_host         = try(replace(replace(konnect_gateway_control_plane.this.config.control_plane_endpoint, "https://", ""), "http://", ""), "")
+  public_edge_dns = local.cp_host == "" ? null : "${split(".", local.cp_host)[0]}.gateways.konghq.com"
 }
 
 # -----------------------------------------------------------------------------
@@ -93,4 +102,26 @@ resource "konnect_cloud_gateway_transit_gateway" "this" {
       ram_share_arn      = var.ram_share_arn
     }
   }
+}
+
+# -----------------------------------------------------------------------------
+# Gateway Service / Route (テストアプリ httpbin を DCGW 経由で公開)
+#  upstream は内部 ALB。コントロールプレーンに設定が保存され、データプレーンへ同期される。
+# -----------------------------------------------------------------------------
+resource "konnect_gateway_service" "app" {
+  control_plane_id = konnect_gateway_control_plane.this.id
+  name             = "${var.name_prefix}-app"
+  host             = var.upstream_host
+  protocol         = var.upstream_protocol
+  port             = var.upstream_port
+  enabled          = true
+}
+
+resource "konnect_gateway_route" "app" {
+  control_plane_id = konnect_gateway_control_plane.this.id
+  name             = "${var.name_prefix}-app"
+  service          = { id = konnect_gateway_service.app.id }
+  paths            = var.route_paths
+  strip_path       = true
+  protocols        = ["http", "https"]
 }

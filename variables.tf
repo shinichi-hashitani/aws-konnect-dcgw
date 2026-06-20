@@ -141,6 +141,12 @@ variable "test_app_health_check_path" {
   default     = "/get"
 }
 
+variable "test_app_route_paths" {
+  description = "DCGW で httpbin を公開する Kong Route のパス"
+  type        = list(string)
+  default     = ["/httpbin"]
+}
+
 variable "test_app_desired_count" {
   description = "ECS サービスの希望タスク数"
   type        = number
