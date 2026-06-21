@@ -127,7 +127,44 @@ set -a; source .env; set +a
 > Kong 側はこの共有を受けて TGW へアタッチメントを作成します。詳細は
 > [NETWORKING.md](./NETWORKING.md) を参照してください。
 
-## 5. テスト用 VPC とアプリ (httpbin) について
+## 5. Kong Gateway（データプレーン）バージョンの指定
+
+DCGW のデータプレーンとして動作する Kong Gateway のバージョンは `var.gateway_version`
+で指定します（既定 `3.14`）。
+
+```hcl
+# terraform.tfvars
+gateway_version = "3.14"
+```
+
+または環境変数で渡すこともできます:
+
+```bash
+# .env など
+export TF_VAR_gateway_version="3.14"
+```
+
+### 利用可能なバージョンの確認
+
+指定可能なバージョンは Konnect の **availability** エンドポイント（**グローバル**
+エンドポイント `https://global.api.konghq.com`）で確認します。地域別エンドポイント
+（`https://us.api.konghq.com` 等）は Cloud Gateways API では 404 になる点に注意してください。
+
+```bash
+curl -s https://global.api.konghq.com/v2/cloud-gateways/availability.json \
+  -H "Authorization: Bearer $KONNECT_TOKEN" | jq '.versions'
+```
+
+> 返却される `versions` のうち最新を指定するのが基本です（執筆時点の例:
+> `3.14 / 3.13 / 3.12 / 3.11 / 3.10 / 3.4`）。利用可能なバージョンは随時更新されるため、
+> 上記コマンドで都度確認してください。
+
+### バージョン変更の反映
+
+`gateway_version` を変更して `terraform apply` すると、`konnect_cloud_gateway_configuration`
+が更新され、データプレーンが指定バージョンへ更新されます。
+
+## 6. テスト用 VPC とアプリ (httpbin) について
 
 `modules/test_app_vpc` が作成するリソース:
 
@@ -155,7 +192,7 @@ ALB は内部向けのため、インターネットからは直接アクセス�
 サービス upstream には ALB の DNS 名（`terraform output test_app_alb_dns_name`）を
 指定します。
 
-## 6. リージョン・AZ に関する注意
+## 7. リージョン・AZ に関する注意
 
 - 既定リージョンは `ap-northeast-1`（東京）です。**対象リージョンで DCGW が
   サポートされているか必ず確認してください。** 非対応の場合は `aws_region` と

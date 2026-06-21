@@ -118,12 +118,6 @@ terraform apply
 
 Konnect UI で確認します（手順は [NETWORKING.md](./NETWORKING.md) 参照）:
 
-```
-Konnect → Gateway Manager → Networks → 作成したネットワーク → 詳細
-```
-
-Networks 画面では、ネットワークが `Ready` になっていること、および Network ID を確認できます。
-
 ![Konnect Networks 画面（ネットワークが Ready 状態、Network ID を確認）](docs/images/konnect-networks-network_id.png)
 
 Configure private networkingのメニュー画面から、Transit Gateway attachmentを選択するとKong AWS Account IDが表示されます。このアカウント ID を `.env` に設定し直します:
@@ -132,6 +126,10 @@ Configure private networkingのメニュー画面から、Transit Gateway attach
 # .env
 export TF_VAR_kong_ram_principal_account_id="123456789012"
 ```
+
+Konnect UI側からKonnect側の状況を確認します。
+![Konnect UI - Data Plane Node画面](docs/images/konnect-data-plane-ready.png)
+上記Network、並びにData Plane Nodeの状態が```ready```になった事を確認の上、次のステップに移ります。
 
 ```bash
 set -a; source .env; set +a
