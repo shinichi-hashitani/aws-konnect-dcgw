@@ -18,6 +18,10 @@ override.tf.json
 .terraformrc
 terraform.rc
 
+# ===== Claude Code (個人/環境依存の設定は除外) =====
+.claude/settings.local.json
+.claude/settings.json
+
 # ===== Misc =====
 .DS_Store
 *.log
