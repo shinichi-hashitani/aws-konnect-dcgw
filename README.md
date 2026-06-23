@@ -45,14 +45,15 @@ flowchart TB
   アタッチメントを自動承認。
 
 関連ドキュメント:
-- [PREREQUISITES.md](./PREREQUISITES.md) — 事前準備、必要権限、テスト VPC / アプリの説明。
+- [PREREQUISITES.md](./PREREQUISITES.md) — 事前準備、必要権限、app-vpc / test-vpc の説明。
 - [NETWORKING.md](./NETWORKING.md) — TGW / RAM / ルーティングの詳細と接続確認手順。
+- [TESTING.md](./TESTING.md) — 疎通 / 負荷テスト（ECS タスク）の実行方法。
 
 ## ディレクトリ構成
 
 ```
 .
-├── README.md / PREREQUISITES.md / NETWORKING.md
+├── README.md / PREREQUISITES.md / NETWORKING.md / TESTING.md
 ├── .env.example                 # 認証情報のテンプレート (コピーして .env を作成)
 ├── versions.tf                  # Terraform / provider バージョン制約・backend
 ├── providers.tf                 # aws / konnect プロバイダ設定
@@ -63,7 +64,8 @@ flowchart TB
 └── modules/
     ├── konnect_dcgw/            # Konnect: CP / ネットワーク / 構成 (private) / TGW
     ├── app_vpc/                 # app-vpc: ECS Fargate (httpbin) + 内部 ALB
-    ├── test_vpc/               # test-vpc: テスト実行クライアント用 (ネットワークのみ)
+    ├── test_vpc/                # test-vpc: テスト実行用 VPC (ネットワークのみ)
+    ├── test_tasks/              # test-vpc で実行するテスト ECS タスク (疎通 / 負荷)
     └── transit_gateway/         # TGW + RAM 共有 + app/test VPC アタッチ + ルート
 ```
 
@@ -171,9 +173,15 @@ httpbin を公開する Kong Service / Route は Terraform で作成済みです
 JSON で返す **エコーエンドポイント**で、DCGW を通過する際のヘッダー伝播の確認に使えます
 （例: `GET /echo` → upstream `GET /anything`）。
 
-> **テストクライアントの実体・private DCGW へのリクエスト方法・テストケースは次ステップで
-> 決定・実装します。** 現状 test-vpc は VPC / サブネット / TGW アタッチ / Kong 網への
-> ルートまでを用意済みです。詳細は [NETWORKING.md](./NETWORKING.md) を参照してください。
+テストは **test-vpc 内の ECS Fargate タスク**として実行します。管理者が **ECS コンソールの
+「タスクを実行」**から起動し、回数・接続先などは環境変数で上書きできます。
+
+- **疎通テスト**（`<project>-test-connectivity`）: Kong 経由で app へ指定回数リクエストし
+  HTTP ステータスを集計。
+- **負荷テスト**（`<project>-test-load`, Locust）: 同時接続数（最大 1000）と実行時間
+  （5分〜最長 30分）を指定して継続実行。
+
+手順・パラメータ・必要な `terraform output` は [TESTING.md](./TESTING.md) を参照してください。
 
 ## クリーンアップ
 

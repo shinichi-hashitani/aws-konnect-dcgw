@@ -66,8 +66,43 @@ output "test_vpc_id" {
 }
 
 output "test_vpc_private_subnet_ids" {
-  description = "test-vpc の private サブネット ID (テストクライアント配置用)"
+  description = "test-vpc の private サブネット ID (Run task のネットワーク設定で選択)"
   value       = module.test_vpc.private_subnet_ids
+}
+
+# ----- テスト実行タスク (ECS Run task で使用) -----
+output "test_ecs_cluster_name" {
+  description = "テスト用 ECS クラスタ名"
+  value       = module.test_tasks.cluster_name
+}
+
+output "test_connectivity_task_family" {
+  description = "疎通テストのタスク定義ファミリ名"
+  value       = module.test_tasks.connectivity_task_family
+}
+
+output "test_load_task_family" {
+  description = "負荷テスト (Locust) のタスク定義ファミリ名"
+  value       = module.test_tasks.load_task_family
+}
+
+output "test_task_security_group_id" {
+  description = "テストタスク用セキュリティグループ ID"
+  value       = module.test_tasks.security_group_id
+}
+
+output "test_run_task_hint" {
+  description = "ECS コンソールでの疎通テスト実行手順 (概要)"
+  value = join(" / ", [
+    "ECS > クラスタ: ${module.test_tasks.cluster_name}",
+    "タスクを実行 > 起動タイプ FARGATE",
+    "タスク定義: ${module.test_tasks.connectivity_task_family}",
+    "VPC: test-vpc (${module.test_vpc.vpc_id})",
+    "サブネット: test_vpc_private_subnet_ids",
+    "SG: ${module.test_tasks.security_group_id}",
+    "パブリックIP: 無効",
+    "上書き可: 環境変数 TARGET_URL / REQUEST_COUNT",
+  ])
 }
 
 # ----- Transit Gateway -----

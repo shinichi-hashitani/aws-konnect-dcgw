@@ -209,10 +209,10 @@ terraform output ram_share_arn
   # 例: internal-konnect-dcgw-app-alb-xxxx.ap-northeast-1.elb.amazonaws.com
   ```
 
-> **テストクライアントの実体（EC2 / ECS など）と、private DCGW へのリクエスト方法
-> （プライベート DNS / エンドポイント）・テストケースは次ステップで決定・実装します。**
-> 現時点で test-vpc は VPC・サブネット・TGW アタッチ・Kong 網へのルートまでを用意した
-> 状態です（`modules/test_vpc`）。
+> テストは **test-vpc 内の ECS Fargate タスク**（`modules/test_tasks`）として実行します。
+> 管理者が ECS コンソールの「タスクを実行」から起動し、接続先 (`TARGET_URL`) や回数は
+> 環境変数で上書きできます。手順は [TESTING.md](./TESTING.md) を参照してください。
+> private DCGW のエンドポイントが解決できない場合は `TARGET_URL` に実際の値を指定します。
 
 ### 疎通の切り分け
 - ALB のターゲットグループのヘルスが `healthy` か（AWS コンソール / `aws elbv2 describe-target-health`）。

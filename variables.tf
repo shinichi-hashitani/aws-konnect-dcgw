@@ -200,3 +200,61 @@ variable "app_memory" {
   type        = number
   default     = 512
 }
+
+# =============================================================================
+# テスト実行タスク (test-vpc / ECS Fargate)
+# =============================================================================
+
+variable "test_client_image" {
+  description = "テストクライアントのコンテナイメージ (curl 同梱)"
+  type        = string
+  default     = "curlimages/curl:latest"
+}
+
+variable "test_target_url" {
+  description = <<-EOT
+    テストの接続先 URL (例: https://<dcgw-edge>/echo)。
+    空の場合は DCGW エッジ DNS + 公開パス (app_route_paths[0]) から自動導出する。
+    private 構成でエッジが解決できない等の場合は、この変数か Run task UI の環境変数
+    TARGET_URL で明示指定する。
+  EOT
+  type        = string
+  default     = ""
+}
+
+variable "test_request_count" {
+  description = "疎通テストのリクエスト回数 (タスク定義の既定値。Run task UI で REQUEST_COUNT 上書き可)"
+  type        = number
+  default     = 10
+}
+
+# --- 負荷テスト (Locust) ---
+
+variable "test_load_target_host" {
+  description = "負荷テストのベース URL (例: https://<dcgw-edge>)。空なら DCGW エッジ DNS から自動導出。Run task UI で TARGET_HOST 上書き可"
+  type        = string
+  default     = ""
+}
+
+variable "test_load_users" {
+  description = "負荷テストの同時接続ユーザー数 (数百〜最大 1000)。Run task UI で USERS 上書き可"
+  type        = number
+  default     = 200
+
+  validation {
+    condition     = var.test_load_users >= 1 && var.test_load_users <= 1000
+    error_message = "test_load_users は 1〜1000 の範囲で指定してください。"
+  }
+}
+
+variable "test_load_spawn_rate" {
+  description = "負荷テストで 1 秒あたりに増やすユーザー数。Run task UI で SPAWN_RATE 上書き可"
+  type        = number
+  default     = 50
+}
+
+variable "test_load_run_time" {
+  description = "負荷テストの実行時間 (Locust 形式: 5m / 30m / 300s など。5分〜最長30分想定)。Run task UI で RUN_TIME 上書き可"
+  type        = string
+  default     = "5m"
+}

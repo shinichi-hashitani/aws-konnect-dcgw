@@ -104,3 +104,31 @@ module "transit_gateway" {
 
   tags = var.tags
 }
+
+# -----------------------------------------------------------------------------
+# 5) テスト実行タスク (ECS Fargate) — test-vpc で実行し DCGW 経由で app を叩く
+#    管理者が ECS コンソールの「タスクを実行」から起動する。
+# -----------------------------------------------------------------------------
+module "test_tasks" {
+  source = "./modules/test_tasks"
+
+  name_prefix = "${local.name_prefix}-test"
+  aws_region  = var.aws_region
+  vpc_id      = module.test_vpc.vpc_id
+  image       = var.test_client_image
+
+  # 接続先 URL。test_target_url 指定時はそれを、未指定時は DCGW エッジ + 公開パスから導出。
+  # (private 構成ではエッジ DNS が private IP に解決され TGW 経由で到達する想定。
+  #  解決できない場合は Run task UI で TARGET_URL を上書きする)
+  target_url    = var.test_target_url != "" ? var.test_target_url : try("https://${module.konnect_dcgw.public_edge_dns}${var.app_route_paths[0]}", "")
+  request_count = var.test_request_count
+
+  # 負荷テスト (Locust): host はベース URL、path は公開パス。
+  load_target_host = var.test_load_target_host != "" ? var.test_load_target_host : try("https://${module.konnect_dcgw.public_edge_dns}", "")
+  load_target_path = var.app_route_paths[0]
+  load_users       = var.test_load_users
+  load_spawn_rate  = var.test_load_spawn_rate
+  load_run_time    = var.test_load_run_time
+
+  tags = var.tags
+}
