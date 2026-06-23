@@ -18,7 +18,7 @@ output "ram_enabled" {
   value       = local.ram_enabled
 }
 
-output "test_vpc_attachment_id" {
-  description = "テスト VPC の TGW アタッチメント ID"
-  value       = aws_ec2_transit_gateway_vpc_attachment.test_vpc.id
+output "vpc_attachment_ids" {
+  description = "各 VPC の TGW アタッチメント ID (キー: app / test)"
+  value       = { for k, a in aws_ec2_transit_gateway_vpc_attachment.this : k => a.id }
 }

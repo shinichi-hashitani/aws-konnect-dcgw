@@ -1,7 +1,8 @@
 # PREREQUISITES — 事前準備・必要権限・テスト環境
 
 このドキュメントは、本リポジトリを実行する前に必要なツール・アカウント・権限と、
-テスト用 VPC / アプリ (httpbin) の構成を説明します。
+app-vpc（httpbin）/ test-vpc（テストクライアント）の構成を説明します。本構成は
+閉塞ネットワーク化のため DCGW を `api_access = private` で構成します。
 
 ## 1. 必要なツール
 
@@ -16,7 +17,7 @@
 ## 2. アカウント
 
 ### AWS アカウント
-- テスト VPC、ECS Fargate、Transit Gateway、RAM 共有を作成します。
+- app-vpc / test-vpc、ECS Fargate、Transit Gateway、RAM 共有を作成します。
 - DCGW のデータプレーンは Kong 管理の別 AWS アカウントに作成されるため、
   ユーザー側アカウントには **作成されません**（TGW で接続するのみ）。
 - アクセスは **IAM Identity Center (AWS SSO) で定義したユーザー**で行います。
@@ -164,33 +165,51 @@ curl -s https://global.api.konghq.com/v2/cloud-gateways/availability.json \
 `gateway_version` を変更して `terraform apply` すると、`konnect_cloud_gateway_configuration`
 が更新され、データプレーンが指定バージョンへ更新されます。
 
-## 6. テスト用 VPC とアプリ (httpbin) について
+## 6. app-vpc / test-vpc について（閉塞構成）
 
-`modules/test_app_vpc` が作成するリソース:
+本構成は閉塞ネットワーク化のため、DCGW を `api_access = private` で構成し、アプリを置く
+**app-vpc** と、閉域網内からテストを実行する **test-vpc** の 2 つの VPC を用意します。
+両 VPC は TGW 経由で Kong 網（private DCGW）に接続します。
 
-- **VPC** (`var.test_vpc_cidr_block`、既定 `10.1.0.0/24`)
+### app-vpc — `modules/app_vpc`（httpbin を配置）
+
+- **VPC** (`var.app_vpc_cidr_block`、既定 `10.1.0.0/24`)
 - **サブネット**: `var.availability_zone_ids` の各 AZ に public / private を 1 つずつ（各 /26）
   - public: NAT Gateway 配置・IGW 経由の egress
   - private: ECS タスクと内部 ALB を配置
 - **NAT Gateway × 1**: private サブネットからの egress（コンテナイメージ取得用）
 - **内部 ALB**: `internal = true`。Kong データプレーンから TGW 経由でアクセスされる
-- **ECS Fargate サービス**: `var.test_app_image`（既定 `kennethreitz/httpbin:latest`）を
-  ポート `var.test_app_container_port`（既定 80）で起動
+- **ECS Fargate サービス**: `var.app_image`（既定 `kennethreitz/httpbin:latest`）を
+  ポート `var.app_container_port`（既定 80）で起動
+- **公開ルート**: DCGW で `var.app_route_paths`（既定 `/echo`）を公開。`strip_path = true`
+  と Service path `var.app_upstream_path`（既定 `/anything`）により **`/echo` → httpbin の
+  `/anything`** へマップ。`/anything` は受信リクエストのヘッダー・メソッド・ボディ等を
+  そのまま JSON で返す **エコーエンドポイント**で、DCGW 通過時のヘッダー伝播確認に使う
 - **セキュリティグループ**:
-  - ALB SG: `var.network_cidr_block`（Kong 網）とテスト VPC CIDR から該当ポートを許可
+  - ALB SG: `var.network_cidr_block`（Kong 網）と app-vpc CIDR から該当ポートを許可
   - Task SG: ALB SG からのみ該当ポートを許可
 - **CloudWatch Logs**: コンテナログ（`/ecs/<prefix>-app`、保持 14 日）
 
-### httpbin の差し替え
-将来 httpbin から別 API へ変更する場合は、`var.test_app_image` /
-`var.test_app_container_port` / `var.test_app_health_check_path` を変更して
+#### httpbin の差し替え
+将来 httpbin から別 API へ変更する場合は、`var.app_image` /
+`var.app_container_port` / `var.app_health_check_path` を変更して
 `terraform apply` するだけです。httpbin のヘルスチェックは既定で `/get`（200 応答）を使用します。
 
-### アクセス経路
-Kong のデータプレーン → TGW → テスト VPC の内部 ALB → ECS Fargate (httpbin)。
-ALB は内部向けのため、インターネットからは直接アクセスできません。Kong の
-サービス upstream には ALB の DNS 名（`terraform output test_app_alb_dns_name`）を
-指定します。
+### test-vpc — `modules/test_vpc`（テスト実行クライアント用）
+
+- **VPC** (`var.test_vpc_cidr_block`、既定 `10.2.0.0/24`)
+- **サブネット**: 各 AZ に public / private を 1 つずつ（各 /26）
+- **NAT Gateway × 1** / **IGW**: クライアントのツール取得などの egress 用
+- private ルートテーブルに Kong 網 CIDR 向け TGW ルートを保持（DCGW へ到達するため）
+
+> **現状はネットワークのみ**です。テストを実行するクライアント本体（EC2 / ECS など）、
+> private DCGW へのリクエスト方法、テストケースは**次ステップで決定・実装**します。
+
+### アクセス経路（閉塞）
+test-vpc のクライアント → TGW → Kong 網（**private** DCGW）→ TGW → app-vpc の内部 ALB →
+ECS Fargate (httpbin)。DCGW は外部公開エンドポイントを持たないため、インターネットから
+直接アクセスはできません。Kong のサービス upstream には app-vpc 内部 ALB の DNS 名
+（`terraform output app_alb_dns_name`）を指定します。
 
 ## 7. リージョン・AZ に関する注意
 

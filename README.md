@@ -1,41 +1,48 @@
-# Kong Konnect Dedicated Cloud Gateway on AWS (Terraform)
+# Kong Konnect Dedicated Cloud Gateway on AWS (Terraform) — 閉塞ネットワーク構成
 
 [Kong Konnect Dedicated Cloud Gateway (DCGW)](https://developer.konghq.com/dedicated-cloud-gateways/) を
-[Terraform provider for Konnect](https://github.com/Kong/terraform-provider-konnect) で構築し、
-AWS Transit Gateway 経由でテスト用 API (httpbin) を配置した VPC と接続する環境一式です。
+[Terraform provider for Konnect](https://github.com/Kong/terraform-provider-konnect) で構築する環境一式です。
+**環境全体を閉塞ネットワーク化**し、DCGW は `api_access = private`（外部公開エンドポイントなし）で
+構成します。アプリ (httpbin) を配置する **app-vpc** と、閉域網内からテストを実行する **test-vpc** を
+AWS Transit Gateway 経由で DCGW に接続します。
 
 ## 全体構成
 
-```
-                 ┌──────────────────────────────┐
-                 │  Kong (Konnect 管理 AWS アカウント) │
-                 │  ┌────────────────────────┐    │
-                 │  │ Cloud Gateway Network   │    │
-                 │  │ (Kong 管理 VPC)         │    │
-                 │  │  Dedicated データプレーン │    │
-                 │  └───────────┬────────────┘    │
-                 └──────────────┼─────────────────┘
-                                │ TGW アタッチメント
-                                │ (RAM 共有 + 自動承認)
-        ┌───────────────────────┴───────────────────────┐
-        │           Transit Gateway (自 AWS アカウント)     │
-        └───────────────────────┬───────────────────────┘
-                                │ VPC アタッチメント
-                 ┌──────────────┴─────────────────┐
-                 │  テスト VPC (10.1.0.0/24)        │
-                 │  ┌──────────────────────────┐   │
-                 │  │ 内部 ALB → ECS Fargate     │   │
-                 │  │ (httpbin :80)             │   │
-                 │  └──────────────────────────┘   │
-                 └────────────────────────────────┘
+```mermaid
+flowchart TB
+  subgraph kong["Kong 管理 AWS アカウント"]
+    cgw["Cloud Gateway Network VPC<br/>10.0.0.0/23 (private)<br/>Dedicated データプレーン (DCGW)"]
+  end
+
+  subgraph own["自 AWS アカウント"]
+    tgw{{"Transit Gateway"}}
+
+    subgraph testvpc["test-vpc 10.2.0.0/24"]
+      client["テストクライアント<br/>(後続タスクで追加)"]
+    end
+
+    subgraph appvpc["app-vpc 10.1.0.0/24"]
+      alb["内部 ALB"] --> ecs["ECS Fargate<br/>httpbin :80"]
+    end
+  end
+
+  cgw <-->|"TGW アタッチメント<br/>(RAM 共有 + 自動承認)"| tgw
+  testvpc <-->|"VPC アタッチメント"| tgw
+  appvpc <-->|"VPC アタッチメント"| tgw
 ```
 
+> **テスト経路**: `test-vpc → TGW → Kong 網 (private DCGW) → TGW → app-vpc (httpbin)`
+> （DCGW は `private` のため外部公開なし。閉域網内の test-vpc から疎通する）
+
 - **Konnect 側 (`modules/konnect_dcgw`)**: コントロールプレーン、Cloud Gateway ネットワーク、
-  データプレーン構成、Transit Gateway アタッチメントを Terraform provider for Konnect で管理。
-- **テスト VPC (`modules/test_app_vpc`)**: httpbin を ECS Fargate で起動し内部 ALB の背後に配置。
-  イメージは `var.test_app_image` で差し替え可能。
-- **Transit Gateway (`modules/transit_gateway`)**: 自 AWS アカウントに TGW を作成し、テスト VPC を
-  アタッチ。TGW を AWS RAM で Kong 管理アカウントへ共有し、Kong 側アタッチメントを自動承認。
+  データプレーン構成（`api_access = private`）、Transit Gateway アタッチメントを管理。
+- **app-vpc (`modules/app_vpc`)**: httpbin を ECS Fargate で起動し内部 ALB の背後に配置。
+  イメージは `var.app_image` で差し替え可能。
+- **test-vpc (`modules/test_vpc`)**: 閉域網内からテストを実行するクライアント用 VPC（現状は
+  ネットワークのみ。テストクライアント本体・テスト実行方法は次ステップで決定・追加）。
+- **Transit Gateway (`modules/transit_gateway`)**: 自 AWS アカウントに TGW を作成し、app-vpc /
+  test-vpc の両方をアタッチ。TGW を AWS RAM で Kong 管理アカウントへ共有し、Kong 側
+  アタッチメントを自動承認。
 
 関連ドキュメント:
 - [PREREQUISITES.md](./PREREQUISITES.md) — 事前準備、必要権限、テスト VPC / アプリの説明。
@@ -54,9 +61,10 @@ AWS Transit Gateway 経由でテスト用 API (httpbin) を配置した VPC と�
 ├── main.tf                      # モジュール結線
 ├── outputs.tf                   # 出力
 └── modules/
-    ├── konnect_dcgw/            # Konnect: CP / ネットワーク / 構成 / TGW
-    ├── test_app_vpc/            # テスト VPC + ECS Fargate (httpbin) + 内部 ALB
-    └── transit_gateway/         # TGW + RAM 共有 + VPC アタッチ + ルート
+    ├── konnect_dcgw/            # Konnect: CP / ネットワーク / 構成 (private) / TGW
+    ├── app_vpc/                 # app-vpc: ECS Fargate (httpbin) + 内部 ALB
+    ├── test_vpc/               # test-vpc: テスト実行クライアント用 (ネットワークのみ)
+    └── transit_gateway/         # TGW + RAM 共有 + app/test VPC アタッチ + ルート
 ```
 
 ## 必要なもの
@@ -148,19 +156,24 @@ RAM 共有と `konnect_cloud_gateway_transit_gateway` が作成され、Kong 側
 アタッチメントが自動承認されます。`terraform output konnect_transit_gateway_state`
 が `ready` になれば接続完了です。
 
-### 6. 接続確認
+### 6. 接続確認（閉塞構成）
 
-httpbin を公開する Kong Service / Route は Terraform で作成済みです
-（upstream = 内部 ALB、パス = `var.test_app_route_paths`）。DCGW の公開エンドポイント
-（**Public Edge DNS**、自前ドメイン不要）へリクエストして確認します:
+本構成は `api_access = private` のため、**インターネットからは DCGW へアクセスできません**。
+疎通は閉域網内の **test-vpc** に置いたクライアントから、TGW 経由で DCGW のプライベート
+エンドポイントへリクエストして確認します。
 
-```bash
-terraform output dcgw_public_edge_dns   # 例: e9f7281a29.gateways.konghq.com
-curl "$(terraform output -raw dcgw_test_url)"   # 例: https://<edge>/httpbin/get
-```
+経路: **test-vpc → TGW → Kong 網 (private DCGW) → TGW → app-vpc (httpbin)**
 
-httpbin の JSON が返れば **DCGW → TGW → 内部 ALB → httpbin** が成立しています。
-詳細・トラブルシュートは [NETWORKING.md](./NETWORKING.md) を参照してください。
+httpbin を公開する Kong Service / Route は Terraform で作成済みです。**公開パスは
+`var.app_route_paths`（既定 `/echo`）**で、`strip_path = true` + Service path
+`var.app_upstream_path`（既定 `/anything`）により **`/echo` → httpbin の `/anything`** へ
+マップされます。`/anything` は受信リクエストのヘッダー・メソッド・ボディ等をそのまま
+JSON で返す **エコーエンドポイント**で、DCGW を通過する際のヘッダー伝播の確認に使えます
+（例: `GET /echo` → upstream `GET /anything`）。
+
+> **テストクライアントの実体・private DCGW へのリクエスト方法・テストケースは次ステップで
+> 決定・実装します。** 現状 test-vpc は VPC / サブネット / TGW アタッチ / Kong 網への
+> ルートまでを用意済みです。詳細は [NETWORKING.md](./NETWORKING.md) を参照してください。
 
 ## クリーンアップ
 

@@ -9,7 +9,7 @@ variable "project_name" {
 }
 
 variable "aws_region" {
-  description = "テスト VPC と Dedicated Cloud Gateway データプレーンを配置する AWS リージョン"
+  description = "VPC と Dedicated Cloud Gateway データプレーンを配置する AWS リージョン"
   type        = string
   default     = "ap-northeast-1"
 }
@@ -58,9 +58,18 @@ variable "gateway_version" {
 }
 
 variable "api_access" {
-  description = "データプレーンの公開方法。private / public / private+public"
+  description = <<-EOT
+    データプレーンの公開方法。private / public / private+public。
+    本構成は閉塞ネットワーク化のため既定を private とし、外部公開エンドポイント
+    (Public Edge DNS) を持たせない。テストは閉域網内の test-vpc から実行する。
+  EOT
   type        = string
-  default     = "private+public"
+  default     = "private"
+
+  validation {
+    condition     = contains(["private", "public", "private+public"], var.api_access)
+    error_message = "api_access は private, public, private+public のいずれかである必要があります。"
+  }
 }
 
 variable "base_rps" {
@@ -71,7 +80,7 @@ variable "base_rps" {
 
 variable "availability_zone_ids" {
   description = <<-EOT
-    Konnect ネットワークおよびテスト VPC で使う AZ ID (AZ 名ではなく AZ-ID 形式)。
+    Konnect ネットワークおよび各 VPC で使う AZ ID (AZ 名ではなく AZ-ID 形式)。
     ap-northeast-1 の例: ["apne1-az1", "apne1-az4"] (apne1-az3 は新規割当不可の場合あり)
   EOT
   type        = list(string)
@@ -80,6 +89,9 @@ variable "availability_zone_ids" {
 
 # =============================================================================
 # ネットワーク CIDR (相互に重複しないこと)
+#   Kong network : Kong 管理 Cloud Gateway VPC
+#   app-vpc      : httpbin (ECS Fargate / 内部 ALB) を配置
+#   test-vpc     : 閉域網内からテストを実行するクライアントを配置
 # =============================================================================
 
 variable "network_cidr_block" {
@@ -93,10 +105,16 @@ variable "network_cidr_block" {
   }
 }
 
-variable "test_vpc_cidr_block" {
-  description = "テスト用 (httpbin) VPC の CIDR。サブネットは /26 で切り出すため 2 AZ では /24 が目安"
+variable "app_vpc_cidr_block" {
+  description = "アプリ (httpbin) VPC の CIDR。サブネットは /26 で切り出すため 2 AZ では /24 が目安"
   type        = string
   default     = "10.1.0.0/24"
+}
+
+variable "test_vpc_cidr_block" {
+  description = "テスト実行用 VPC の CIDR。サブネットは /26 で切り出すため 2 AZ では /24 が目安"
+  type        = string
+  default     = "10.2.0.0/24"
 }
 
 # =============================================================================
@@ -120,46 +138,64 @@ variable "amazon_side_asn" {
 }
 
 # =============================================================================
-# テスト用アプリ (httpbin / ECS Fargate)
+# アプリ (httpbin / ECS Fargate) — app-vpc に配置
 # =============================================================================
 
-variable "test_app_image" {
-  description = "テスト API のコンテナイメージ。後で差し替え可能"
+variable "app_image" {
+  description = "アプリのコンテナイメージ。後で差し替え可能"
   type        = string
   default     = "kennethreitz/httpbin:latest"
 }
 
-variable "test_app_container_port" {
-  description = "テスト API コンテナが listen するポート"
+variable "app_container_port" {
+  description = "アプリコンテナが listen するポート"
   type        = number
   default     = 80
 }
 
-variable "test_app_health_check_path" {
+variable "app_health_check_path" {
   description = "ALB ターゲットグループのヘルスチェックパス"
   type        = string
   default     = "/get"
 }
 
-variable "test_app_route_paths" {
-  description = "DCGW で httpbin を公開する Kong Route のパス"
+variable "app_route_paths" {
+  description = "DCGW で公開する Kong Route のパス (公開パス)。用途はエコーのため既定 /echo"
   type        = list(string)
-  default     = ["/httpbin"]
+  default     = ["/echo"]
 }
 
-variable "test_app_desired_count" {
+variable "app_upstream_path" {
+  description = "Gateway Service の path。公開パス (/echo) を httpbin のエコーエンドポイント (/anything) へマップする"
+  type        = string
+  default     = "/anything"
+}
+
+variable "app_route_strip_path" {
+  description = "Route の strip_path。true で公開パス (/echo) を strip し Service path (/anything) を前置して転送 (/echo -> httpbin /anything)"
+  type        = bool
+  default     = true
+}
+
+variable "app_route_protocols" {
+  description = "Route がマッチするプロトコル。https を含めても自前証明書は不要 (DCGW エッジが TLS 終端)"
+  type        = list(string)
+  default     = ["http", "https"]
+}
+
+variable "app_desired_count" {
   description = "ECS サービスの希望タスク数"
   type        = number
   default     = 1
 }
 
-variable "test_app_cpu" {
+variable "app_cpu" {
   description = "Fargate タスクの CPU ユニット"
   type        = number
   default     = 256
 }
 
-variable "test_app_memory" {
+variable "app_memory" {
   description = "Fargate タスクのメモリ (MiB)"
   type        = number
   default     = 512

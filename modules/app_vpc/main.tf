@@ -120,11 +120,11 @@ resource "aws_route_table_association" "private" {
 # -----------------------------------------------------------------------------
 resource "aws_security_group" "alb" {
   name        = "${var.name_prefix}-alb-sg"
-  description = "Internal ALB for the test app"
+  description = "Internal ALB for the app (httpbin)"
   vpc_id      = aws_vpc.this.id
 
   ingress {
-    description = "App traffic from Kong network / test VPC"
+    description = "App traffic from Kong network (via DCGW)"
     from_port   = var.container_port
     to_port     = var.container_port
     protocol    = "tcp"
