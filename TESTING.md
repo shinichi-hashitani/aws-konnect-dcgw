@@ -50,10 +50,11 @@ Kong (DCGW) 経由で app へ指定回数リクエストし、各レスポンス
 
 ### 結果の確認
 
-- タスクの **ログ**（CloudWatch Logs: `terraform output` の `test_task_security_group_id`
-  と同じ命名規則のロググループ `/ecs/<project>-test`）で各リクエストの OK/NG と
-  サマリ（`result ok=.. ng=.. total=..`）を確認します。
+- CloudWatch Logs（ロググループ `/ecs/<project>-test`、ストリーム接頭辞 `connectivity`）で
+  各リクエストの OK/NG とサマリ（`result ok=.. ng=.. total=..`）を確認します。
 - タスクの **終了コード**（`0` = 全件成功、非ゼロ = NG あり）でも判別できます。
+- 詳細な確認手順・ストリーム命名・Logs Insights クエリ例は「3. CloudWatch Logs で結果を
+  検証する」を参照してください。
 
 ### CLI で実行する場合（参考）
 
@@ -108,6 +109,8 @@ aws ecs run-task \
 - CloudWatch Logs（ロググループ `/ecs/<project>-test`、ストリーム接頭辞 `load`）に
   Locust の統計（リクエスト数・失敗数・RPS・レイテンシ分布・最終サマリ）が出力されます。
 - 失敗が発生するとタスクは非ゼロ終了します（`--exit-code-on-error`、Locust 既定）。
+- 詳細な確認手順・ストリーム命名・Logs Insights クエリ例は「3. CloudWatch Logs で結果を
+  検証する」を参照してください。
 
 ### CLI で実行する場合（参考）
 
@@ -123,6 +126,71 @@ aws ecs run-task \
   --task-definition "$FAMILY" \
   --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SG],assignPublicIp=DISABLED}" \
   --overrides '{"containerOverrides":[{"name":"load","environment":[{"name":"USERS","value":"1000"},{"name":"RUN_TIME","value":"30m"}]}]}'
+```
+
+## 3. CloudWatch Logs で結果を検証する
+
+**追加設定は不要**です。Terraform 側でログ収集が完結するよう構成済みです
+（[modules/test_tasks/main.tf](modules/test_tasks/main.tf)）。
+
+- ロググループ `/ecs/<project>-test` を事前作成（保持 14 日、`var.log_retention_days`）
+- タスク定義に `awslogs` ドライバを設定（ストリーム接頭辞 `connectivity` / `load`）
+- 実行ロールに `AmazonECSTaskExecutionRolePolicy`（`logs:CreateLogStream` /
+  `logs:PutLogEvents` を含む）を付与
+- ログ送信経路は test-vpc の **NAT 経由**（※将来エアギャップ化で NAT を外す場合のみ、
+  `logs` の VPC インターフェイスエンドポイントが別途必要）
+
+### ログストリームの命名
+
+`awslogs` 既定で **`<接頭辞>/<コンテナ名>/<タスクID>`** になります。
+
+| テスト | ログストリーム |
+|--------|----------------|
+| 疎通テスト | `connectivity/connectivity/<task-id>` |
+| 負荷テスト | `load/load/<task-id>` |
+
+### 確認手順（コンソール）
+
+- **CloudWatch** → ロググループ `/ecs/<project>-test` → 実行したタスクの時刻 / タスク ID で
+  ストリームを開く
+- もしくは **ECS** → 該当タスク → **「ログ」タブ**（同じ内容を表示）
+- タスクの **終了コード**は ECS → 停止したタスク → コンテナの *Exit code*（`0`=成功、
+  非ゼロ=失敗あり）
+
+### 出力の見方
+
+- **疎通テスト**: `[3/10] OK (200)` のような各リクエスト結果と、最終行
+  `[connectivity] result ok=10 ng=0 total=10`。`ng` が 0 なら全件成功。
+- **負荷テスト (Locust)**: 実行中の統計テーブル（`# reqs` / `# fails` / `Avg` / `p95` /
+  `req/s` など）と、終了時の集計サマリ。`# fails` と レイテンシ分位を確認。
+
+### Logs Insights クエリ例
+
+ロググループ `/ecs/<project>-test` を選択して実行します。
+
+```
+# 疎通テストのサマリ行を抽出
+fields @timestamp, @message
+| filter @logStream like /connectivity/
+| filter @message like /result/
+| sort @timestamp desc
+| limit 20
+```
+
+```
+# 疎通テストの NG 行のみ
+fields @timestamp, @message
+| filter @logStream like /connectivity/
+| filter @message like /NG/
+| sort @timestamp desc
+```
+
+```
+# 負荷テストの失敗・エラー行を抽出
+fields @timestamp, @message
+| filter @logStream like /load/
+| filter @message like /fail/ or @message like /Error/
+| sort @timestamp desc
 ```
 
 ## Run task に必要な値（terraform output）
