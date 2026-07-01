@@ -94,7 +94,7 @@ resource "konnect_cloud_gateway_transit_gateway" "this" {
 
   aws_transit_gateway = {
     name        = "${var.name_prefix}-tgw"
-    cidr_blocks = var.test_vpc_cidr_blocks
+    cidr_blocks = var.routed_cidr_blocks
 
     transit_gateway_attachment_config = {
       kind               = "aws-transit-gateway-attachment"
@@ -105,8 +105,11 @@ resource "konnect_cloud_gateway_transit_gateway" "this" {
 }
 
 # -----------------------------------------------------------------------------
-# Gateway Service / Route (テストアプリ httpbin を DCGW 経由で公開)
-#  upstream は内部 ALB。コントロールプレーンに設定が保存され、データプレーンへ同期される。
+# Gateway Service / Route (httpbin を DCGW 経由で公開)
+#  upstream は app-vpc の内部 ALB。コントロールプレーンに設定が保存され、データプレーンへ
+#  同期される。公開パス /echo を Service path /anything へマップし (strip_path=true)、
+#  httpbin の /anything エコーエンドポイントへ到達させ、リクエスト情報 (ヘッダー等) を
+#  そのままエコーさせる。
 # -----------------------------------------------------------------------------
 resource "konnect_gateway_service" "app" {
   control_plane_id = konnect_gateway_control_plane.this.id
@@ -114,6 +117,7 @@ resource "konnect_gateway_service" "app" {
   host             = var.upstream_host
   protocol         = var.upstream_protocol
   port             = var.upstream_port
+  path             = var.upstream_path
   enabled          = true
 }
 
@@ -122,6 +126,6 @@ resource "konnect_gateway_route" "app" {
   name             = "${var.name_prefix}-app"
   service          = { id = konnect_gateway_service.app.id }
   paths            = var.route_paths
-  strip_path       = true
-  protocols        = ["http", "https"]
+  strip_path       = var.route_strip_path
+  protocols        = var.route_protocols
 }

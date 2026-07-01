@@ -9,7 +9,7 @@ variable "aws_region" {
 }
 
 variable "vpc_cidr" {
-  description = "テスト VPC の CIDR"
+  description = "アプリ (httpbin) VPC の CIDR"
   type        = string
 }
 
@@ -19,12 +19,12 @@ variable "availability_zone_ids" {
 }
 
 variable "allowed_ingress_cidrs" {
-  description = "テストアプリ ALB へのアクセスを許可する CIDR (Kong ネットワーク CIDR など)"
+  description = "アプリ ALB へのアクセスを許可する CIDR (Kong ネットワーク CIDR など)"
   type        = list(string)
 }
 
 variable "app_image" {
-  description = "テストアプリのコンテナイメージ"
+  description = "アプリ (httpbin) のコンテナイメージ"
   type        = string
 }
 

@@ -1,10 +1,10 @@
 output "vpc_id" {
-  description = "テスト VPC の ID"
+  description = "アプリ VPC の ID"
   value       = aws_vpc.this.id
 }
 
 output "vpc_cidr" {
-  description = "テスト VPC の CIDR"
+  description = "アプリ VPC の CIDR"
   value       = aws_vpc.this.cidr_block
 }
 

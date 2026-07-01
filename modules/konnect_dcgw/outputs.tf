@@ -38,6 +38,13 @@ output "route_paths" {
   value       = konnect_gateway_route.app.paths
 }
 
+output "dataplane_private_ips" {
+  description = "データプレーン群をプロキシする内部 LB の private IP (private DCGW の宛先)"
+  # for 式で private_ip_addresses を集約し flatten。splat だと値が unknown の際に
+  # 平坦化されず list(list(string)) のまま渡り型エラーになるため for 式を使う。
+  value = flatten([for g in konnect_cloud_gateway_configuration.this.dataplane_groups : g.private_ip_addresses])
+}
+
 output "public_edge_dns" {
   description = "DCGW 公開エンドポイント (Public Edge DNS)。control plane endpoint から導出"
   value       = local.public_edge_dns

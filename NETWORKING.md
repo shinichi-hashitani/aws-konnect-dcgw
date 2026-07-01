@@ -1,32 +1,43 @@
 # NETWORKING — Transit Gateway 接続とルーティング
 
-テスト VPC と Kong Dedicated Cloud Gateway (DCGW) の Cloud Gateway ネットワークを
-AWS Transit Gateway (TGW) で接続する仕組みと設定手順、確認方法をまとめます。
+app-vpc / test-vpc と Kong Dedicated Cloud Gateway (DCGW) の Cloud Gateway ネットワークを
+AWS Transit Gateway (TGW) で接続する仕組みと設定手順、確認方法をまとめます。本構成は
+**閉塞ネットワーク化**を前提とし、DCGW は `api_access = private`（外部公開エンドポイント
+なし）で構成します。テストは閉域網内の **test-vpc** から実行します。
 
 ## 1. 接続モデルの概要
 
 DCGW のデータプレーンは **Kong 管理の AWS アカウント**内の VPC
-（Cloud Gateway ネットワーク）で稼働します。ユーザーのテスト VPC とは別アカウント
-のため、以下の流れで TGW を介してプライベート接続します。
+（Cloud Gateway ネットワーク）で稼働します。ユーザーの app-vpc / test-vpc とは別アカウント
+のため、以下の流れで TGW を介してプライベート接続します。1 つの TGW に **app-vpc と
+test-vpc の両方**をアタッチします。
 
+```mermaid
+flowchart LR
+  subgraph kong["Kong 管理アカウント"]
+    cgw["Cloud Gateway ネットワーク VPC<br/>network_cidr_block 10.0.0.0/23<br/>(private DCGW)"]
+  end
+
+  subgraph own["自 AWS アカウント"]
+    tgw{{"Transit Gateway<br/>(自アカウント所有)"}}
+    app["app-vpc<br/>10.1.0.0/24 (httpbin)"]
+    test["test-vpc<br/>10.2.0.0/24 (テストクライアント)"]
+  end
+
+  app -->|"① TGW 作成 + VPC アタッチ"| tgw
+  test -->|"① VPC アタッチ"| tgw
+  tgw -->|"② TGW を RAM で Kong へ共有"| cgw
+  cgw -->|"③ Kong がアタッチメント作成<br/>(RAM 共有を受けて)"| tgw
 ```
-[Kong 管理アカウント]                         [自 AWS アカウント]
- Cloud Gateway ネットワーク VPC                 テスト VPC (httpbin)
-   (network_cidr_block 10.0.0.0/23)             (test_vpc_cidr_block 10.1.0.0/24)
-            │                                          │
-            │ ③ Kong がアタッチメント作成               │ ① TGW 作成 + VPC アタッチ
-            │   (RAM 共有を受けて)                       │
-            └──────────────►  Transit Gateway  ◄────────┘
-                              (自アカウント所有)
-                          ② TGW を RAM で Kong へ共有
-```
+
+> **テスト経路**: `test-vpc → TGW → Kong 網 (private DCGW) → TGW → app-vpc (httpbin)`
 
 ### 役割分担
 
 | ステップ | 実行側 | リソース / 操作 |
 |---------|--------|----------------|
 | Konnect: コントロールプレーン / ネットワーク / データプレーン構成 | Terraform (konnect) | `konnect_gateway_control_plane`, `konnect_cloud_gateway_network`, `konnect_cloud_gateway_configuration` |
-| ① TGW 作成・テスト VPC アタッチ・ルート | Terraform (aws) | `aws_ec2_transit_gateway`, `aws_ec2_transit_gateway_vpc_attachment`, `aws_route` |
+| ① TGW 作成・app-vpc / test-vpc アタッチ・ルート | Terraform (aws) | `aws_ec2_transit_gateway`, `aws_ec2_transit_gateway_vpc_attachment` (for_each), `aws_route` |
 | ② TGW を Kong アカウントへ RAM 共有 | Terraform (aws) | `aws_ram_resource_share`, `aws_ram_resource_association`, `aws_ram_principal_association` |
 | ③ Kong が TGW へアタッチメント作成 | Terraform (konnect) | `konnect_cloud_gateway_transit_gateway` |
 | アタッチメントの承認 | AWS（自動） | TGW の `auto_accept_shared_attachments = "enable"` により自動承認 |
@@ -43,12 +54,14 @@ DCGW のデータプレーンは **Kong 管理の AWS アカウント**内の VP
 | 用途 | 変数 | 既定値 | 制約 |
 |------|------|--------|------|
 | Kong 管理ネットワーク VPC | `network_cidr_block` | `10.0.0.0/23` | prefix は **/16〜/23**（Kong 制約）。2 AZ は最小 /23 |
-| テスト VPC | `test_vpc_cidr_block` | `10.1.0.0/24` | AWS 通常 VPC。サブネットを /26 で切り出すため 2 AZ では /24 が目安 |
+| app-vpc (httpbin) | `app_vpc_cidr_block` | `10.1.0.0/24` | AWS 通常 VPC。サブネットを /26 で切り出すため 2 AZ では /24 が目安 |
+| test-vpc (テストクライアント) | `test_vpc_cidr_block` | `10.2.0.0/24` | 同上 |
 
-- 2 つの CIDR は **重複してはいけません**。
+- 3 つの CIDR は **相互に重複してはいけません**。
 - `konnect_cloud_gateway_transit_gateway.aws_transit_gateway.cidr_blocks` には
-  「Kong データプレーンがルートする宛先 = テスト VPC の CIDR」を渡します
-  （本構成では `[test_vpc_cidr_block]`）。
+  「Kong データプレーンがルートする宛先」を渡します。本構成では **app-vpc と test-vpc の
+  両 CIDR**（`[app_vpc_cidr_block, test_vpc_cidr_block]`）を渡し、Kong から app-vpc
+  (upstream) への往路と test-vpc への復路の双方を成立させます。
 
 ### 2.2 Kong 側の最小 CIDR サイズ制限（根拠）
 
@@ -74,27 +87,28 @@ DCGW のデータプレーンは **Kong 管理の AWS アカウント**内の VP
 
 出典: [Dedicated Cloud Gateways reference — VPC CIDR 要件](https://developer.konghq.com/dedicated-cloud-gateways/reference/)
 
-### 2.3 テスト VPC のサブネット割当
+### 2.3 app-vpc / test-vpc のサブネット割当
 
-テスト VPC のサブネットは各 AZ の public / private を **/26** で切り出します
-（`modules/test_app_vpc` が VPC prefix から `/26` までの newbits を算出）。
-既定の `/24` + 2 AZ では以下のように `/24` を過不足なく使い切ります。
+app-vpc・test-vpc のサブネットは各 AZ の public / private を **/26** で切り出します
+（`modules/app_vpc` / `modules/test_vpc` が VPC prefix から `/26` までの newbits を算出。
+両モジュールとも同じ方式）。既定の `/24` + 2 AZ では以下のように `/24` を過不足なく
+使い切ります（app-vpc の例。test-vpc は `10.2.x` で同じ割当）。
 
-| サブネット | AZ | CIDR | 用途 |
-|-----------|----|------|------|
-| public  | apne1-az1 | `10.1.0.0/26` | NAT Gateway / IGW egress |
-| public  | apne1-az4 | `10.1.0.64/26` | NAT Gateway / IGW egress |
-| private | apne1-az1 | `10.1.0.128/26` | ECS Fargate / 内部 ALB |
-| private | apne1-az4 | `10.1.0.192/26` | ECS Fargate / 内部 ALB |
+| サブネット | AZ | app-vpc CIDR | test-vpc CIDR | 用途 |
+|-----------|----|--------------|---------------|------|
+| public  | apne1-az1 | `10.1.0.0/26`   | `10.2.0.0/26`   | NAT Gateway / IGW egress |
+| public  | apne1-az4 | `10.1.0.64/26`  | `10.2.0.64/26`  | NAT Gateway / IGW egress |
+| private | apne1-az1 | `10.1.0.128/26` | `10.2.0.128/26` | app: ECS/内部ALB、test: クライアント |
+| private | apne1-az4 | `10.1.0.192/26` | `10.2.0.192/26` | 同上 |
 
-> AZ 数を増やす場合はテスト VPC を `/24` より大きくしてください（`/24` には /26 が 4 つ
+> AZ 数を増やす場合は各 VPC を `/24` より大きくしてください（`/24` には /26 が 4 つ
 > しか入らないため、3 AZ 以上では public/private 合計が収まりません）。
 
 ## 3. ルーティング
 
 ### TGW レベル
-`aws_ec2_transit_gateway` で以下を有効化しているため、テスト VPC アタッチメントと
-Kong 側アタッチメントの双方が **デフォルト TGW ルートテーブルに自動関連付け・自動伝播**
+`aws_ec2_transit_gateway` で以下を有効化しているため、app-vpc / test-vpc 両アタッチメントと
+Kong 側アタッチメントが **デフォルト TGW ルートテーブルに自動関連付け・自動伝播**
 されます。アタッチメント間の経路は自動で学習されます。
 
 ```hcl
@@ -103,17 +117,22 @@ default_route_table_propagation = "enable"
 auto_accept_shared_attachments  = "enable"
 ```
 
-### テスト VPC レベル
-private ルートテーブルに、Kong ネットワーク CIDR 宛のルートを TGW 向けに追加します
-（`modules/transit_gateway` の `aws_route.to_kong_network`）。
+### app-vpc / test-vpc レベル
+各 VPC の private ルートテーブルに、Kong ネットワーク CIDR 宛のルートを TGW 向けに
+追加します（`modules/transit_gateway` の `aws_route.to_kong_network`。`vpc_attachments`
+で渡した全 VPC のルートテーブルに `for_each` で適用）。
 
 ```
 宛先: 10.0.0.0/23 (network_cidr_block) → ターゲット: TGW
 ```
 
+> app-vpc と test-vpc の間に直接ルートは張りません。テストは必ず Kong 網（DCGW）を
+> 経由します（test-vpc → DCGW → app-vpc）。
+
 ### Kong ネットワークレベル
-Kong データプレーンからテスト VPC への戻りルートは、`konnect_cloud_gateway_transit_gateway`
-に渡した `cidr_blocks`（= テスト VPC CIDR）に基づき Kong 側で構成されます。
+Kong データプレーンから app-vpc (upstream) / test-vpc (復路) への戻りルートは、
+`konnect_cloud_gateway_transit_gateway` に渡した `cidr_blocks`
+（= `[app_vpc_cidr_block, test_vpc_cidr_block]`）に基づき Kong 側で構成されます。
 
 ## 4. Kong 管理 AWS アカウント ID（RAM 共有先）の確認
 
@@ -168,49 +187,37 @@ terraform output ram_share_arn
 `created → initializing → pending-acceptance → ready` と遷移します。
 `pending-acceptance` から進まない場合は §7 を確認してください。
 
-## 6. 接続確認
+## 6. 接続確認（閉塞構成）
 
-DCGW のデータプレーンからテスト VPC の httpbin（内部 ALB）へ到達できることを確認します。
+本構成は `api_access = private` のため、**インターネットから DCGW へはアクセスできません**
+（`dcgw_public_edge_dns` / `dcgw_public_test_url` は null）。疎通は閉域網内の **test-vpc**
+に置いたクライアントから、TGW 経由で DCGW のプライベートエンドポイントへリクエストして
+確認します。
 
-1. Kong のサービス upstream に内部 ALB の DNS 名を設定:
+経路: **test-vpc (クライアント) → TGW → Kong 網 (private DCGW) → TGW → app-vpc (httpbin)**
 
-   ```bash
-   terraform output test_app_alb_dns_name
-   # 例: internal-konnect-dcgw-test-alb-xxxx.ap-northeast-1.elb.amazonaws.com
-   ```
+- Kong のサービス / ルートは Terraform で作成済み（`modules/konnect_dcgw` の
+  `konnect_gateway_service` / `konnect_gateway_route`、upstream = app-vpc 内部 ALB
+  `app_alb_dns_name`、公開パス = `var.app_route_paths` 既定 `/echo`、`strip_path = true` +
+  Service path `var.app_upstream_path` 既定 `/anything`）。**`/echo` → httpbin の `/anything`**
+  へマップされ、`/anything` は受信リクエストのヘッダー等をそのまま JSON で返す
+  **エコーエンドポイント**で、DCGW 通過時のヘッダー伝播の検証に使えます。
+- app-vpc 内部 ALB の DNS 名は output から取得できます:
 
-2. サービス / ルートは Terraform で作成済み（`modules/konnect_dcgw` の
-   `konnect_gateway_service` / `konnect_gateway_route`、upstream = 内部 ALB、
-   パス = `var.test_app_route_paths`）。UI で作る場合は upstream に
-   `http://<alb-dns-name>`（ポート 80）を指定。
+  ```bash
+  terraform output app_alb_dns_name
+  # 例: internal-konnect-dcgw-app-alb-xxxx.ap-northeast-1.elb.amazonaws.com
+  ```
 
-3. DCGW の公開エンドポイント（**Public Edge DNS**）経由でリクエストし、httpbin の応答を確認:
-
-   - **自前ドメインは不要**。Konnect が付与する **Public Edge DNS** を使います
-     （Custom Domains は自前ドメインを使う場合のみ・任意）。公開 FQDN は control plane の
-     `proxy_urls` には出ません。
-   - 形式: **`<CP プレフィックス>.gateways.konghq.com`**
-     （`control_plane_endpoint` = `https://<prefix>.<geo>.cp.konghq.com` の先頭ラベルから導出）。
-     リージョンのエッジ（例 `<prefix>.aws-ap-northeast-1.edge.gateways.konghq.com`）へ解決されます。
-   - UI でも確認可: Konnect → API Gateway → 対象コントロールプレーン → サイドバー
-     **Connect** → **Public Edge DNS**。
-   - 本リポジトリでは Terraform output から直接取得できます:
-
-     ```bash
-     terraform output dcgw_public_edge_dns   # 例: e9f7281a29.gateways.konghq.com
-     terraform output dcgw_test_url          # 例: https://e9f7281a29.gateways.konghq.com/httpbin/get
-     curl "$(terraform output -raw dcgw_test_url)"
-     ```
-
-   - 成功例（経路の証跡）: レスポンスの `X-Kong-Request-Id`（Kong 通過）、
-     `Host: internal-...elb...`（内部 ALB へ転送）、`origin: ..., 10.0.0.x`
-     （Kong データプレーンの送信元が Kong 網 `10.0.0.0/23` = TGW 経路成立）。
-   - `/get` は httpbin がリクエスト情報を JSON で返すエンドポイントです。
+> テストは **test-vpc 内の ECS Fargate タスク**（`modules/test_tasks`）として実行します。
+> 管理者が ECS コンソールの「タスクを実行」から起動し、接続先 (`TARGET_URL`) や回数は
+> 環境変数で上書きできます。手順は [TESTING.md](./TESTING.md) を参照してください。
+> private DCGW のエンドポイントが解決できない場合は `TARGET_URL` に実際の値を指定します。
 
 ### 疎通の切り分け
 - ALB のターゲットグループのヘルスが `healthy` か（AWS コンソール / `aws elbv2 describe-target-health`）。
-- テスト VPC private ルートテーブルに Kong CIDR → TGW のルートがあるか。
-- TGW のデフォルトルートテーブルに両アタッチメントが関連付け・伝播されているか。
+- app-vpc / test-vpc の private ルートテーブルに Kong CIDR → TGW のルートがあるか。
+- TGW のデフォルトルートテーブルに 3 アタッチメント（app / test / Kong）が関連付け・伝播されているか。
 - ALB SG が Kong ネットワーク CIDR からの該当ポートを許可しているか。
 
 ## 7. トラブルシュート
@@ -220,7 +227,7 @@ DCGW のデータプレーンからテスト VPC の httpbin（内部 ALB）へ�
 | `konnect_transit_gateway_state` が `pending-acceptance` のまま | TGW の `auto_accept_shared_attachments` が `enable` か。RAM 共有 (`ram_share_arn`) が Kong アカウントに正しく関連付いているか |
 | RAM 共有が Kong に届かない | `aws_ram_resource_share.allow_external_principals = true` か。`kong_ram_principal_account_id` が正しいか |
 | `provider account` が見つからない (`one()` エラー) | Konnect で AWS プロバイダアカウントがリンク済みか。`konnect_cloud_gateway_provider_account_list` が AWS を返すか |
-| ALB ターゲットが unhealthy | ECS タスクが起動しているか（NAT 経由でイメージ取得できているか）。ヘルスチェックパス `var.test_app_health_check_path` が 200 を返すか |
+| ALB ターゲットが unhealthy | ECS タスクが起動しているか（NAT 経由でイメージ取得できているか）。ヘルスチェックパス `var.app_health_check_path` が 200 を返すか |
 | データプレーンが Provisioning のまま | リージョンが DCGW 対応か。`gateway_version` が有効か。Konnect の課金 / プランを確認 |
 
 ## 8. 削除時の注意
@@ -229,8 +236,8 @@ DCGW のデータプレーンからテスト VPC の httpbin（内部 ALB）へ�
 
 1. `konnect_cloud_gateway_transit_gateway`（Kong 側アタッチメント）
 2. RAM 共有（`aws_ram_*`）
-3. TGW VPC アタッチメント・ルート・TGW
-4. ECS / ALB / VPC・Konnect ネットワーク / コントロールプレーン
+3. TGW VPC アタッチメント (app / test)・ルート・TGW
+4. ECS / ALB / app-vpc / test-vpc・Konnect ネットワーク / コントロールプレーン
 
 - Kong 側アタッチメントが残っていると TGW を削除できません。先に
   `konnect_cloud_gateway_transit_gateway` が削除されることを確認してください。

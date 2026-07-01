@@ -15,8 +15,8 @@ aws_region   = "ap-northeast-1"
 # Konnect
 konnect_server_url = "https://us.api.konghq.com"
 control_plane_geo  = "us"
-gateway_version    = "3.14"  # 利用可能版: 3.14/3.13/3.12/3.11/3.10/3.4
-api_access         = "private+public"
+gateway_version    = "3.14"      # 利用可能版: 3.14/3.13/3.12/3.11/3.10/3.4
+api_access         = "private"   # 閉塞構成。外部公開する場合のみ private+public / public
 base_rps           = 100
 
 # AZ は AZ-ID 形式で指定 (AZ 名ではない)
@@ -24,13 +24,14 @@ availability_zone_ids = ["apne1-az1", "apne1-az4"]
 
 # CIDR (相互に重複しないこと)
 # Kong ネットワークは prefix /16〜/23 (2 AZ は最小 /23)。
-# テスト VPC はサブネットを /26 で切り出すため 2 AZ では /24。
-network_cidr_block  = "10.0.0.0/23"
-test_vpc_cidr_block = "10.1.0.0/24"
+# app-vpc / test-vpc はサブネットを /26 で切り出すため 2 AZ では /24。
+network_cidr_block  = "10.0.0.0/23"  # Kong 管理 Cloud Gateway ネットワーク
+app_vpc_cidr_block  = "10.1.0.0/24"  # httpbin を配置するアプリ VPC
+test_vpc_cidr_block = "10.2.0.0/24"  # テスト実行クライアント用 VPC
 
-# テストアプリ
-test_app_image          = "kennethreitz/httpbin:latest"
-test_app_container_port = 80
+# アプリ (httpbin)
+app_image          = "kennethreitz/httpbin:latest"
+app_container_port = 80
 
 # kong_ram_principal_account_id は .env (TF_VAR_*) 経由での指定を推奨。
 # ここに直接書く場合はコミットしないよう注意:

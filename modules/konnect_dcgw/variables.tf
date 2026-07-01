@@ -60,8 +60,8 @@ variable "tgw_attachment_enabled" {
   default     = false
 }
 
-variable "test_vpc_cidr_blocks" {
-  description = "Kong データプレーンからルートする宛先 CIDR (テスト VPC の CIDR)"
+variable "routed_cidr_blocks" {
+  description = "Kong データプレーンから TGW 経由でルートする宛先 CIDR のリスト (app-vpc / test-vpc の CIDR)"
   type        = list(string)
 }
 
@@ -90,8 +90,37 @@ variable "upstream_port" {
   default     = 80
 }
 
+variable "upstream_path" {
+  description = <<-EOT
+    Gateway Service の path。strip_path=true 時に Route で strip 後のパスへ前置される。
+    公開パス (/echo) を httpbin のエコーエンドポイント (/anything) へマップするために使用。
+    null の場合は Service に path を設定しない。
+  EOT
+  type        = string
+  default     = "/anything"
+}
+
 variable "route_paths" {
-  description = "DCGW で公開するルートのパス"
+  description = "DCGW で公開するルートのパス (Kong Route エンティティの path)"
   type        = list(string)
-  default     = ["/httpbin"]
+  default     = ["/echo"]
+}
+
+variable "route_strip_path" {
+  description = <<-EOT
+    Route の strip_path。true の場合、マッチしたパス (/echo) を strip し、Service の
+    path (/anything) を前置して upstream へ転送する (/echo -> httpbin /anything エコー)。
+  EOT
+  type        = bool
+  default     = true
+}
+
+variable "route_protocols" {
+  description = <<-EOT
+    Route がマッチするプロトコル。証明書の要否とは無関係 (DCGW エッジで Konnect 管理証明書
+    により TLS 終端されるため自前証明書は不要。自前証明書が要るのは Custom Domains のみ)。
+    HTTPS クライアントを受けるには https を含める。
+  EOT
+  type        = list(string)
+  default     = ["http", "https"]
 }

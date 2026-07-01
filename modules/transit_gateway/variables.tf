@@ -8,19 +8,18 @@ variable "amazon_side_asn" {
   type        = number
 }
 
-variable "vpc_id" {
-  description = "TGW にアタッチするテスト VPC の ID"
-  type        = string
-}
-
-variable "attachment_subnet_ids" {
-  description = "TGW VPC アタッチメントを配置するサブネット ID (AZ ごとに 1 つ)"
-  type        = list(string)
-}
-
-variable "route_table_ids" {
-  description = "Kong ネットワーク CIDR 向けルートを追加するテスト VPC のルートテーブル ID"
-  type        = list(string)
+variable "vpc_attachments" {
+  description = <<-EOT
+    TGW にアタッチする VPC のマップ。キーは識別子 (例: app / test)。
+      vpc_id          : アタッチ対象 VPC の ID
+      subnet_ids      : アタッチメントを配置するサブネット ID (AZ ごとに 1 つ)
+      route_table_ids : Kong ネットワーク CIDR 向けルートを追加するルートテーブル ID
+  EOT
+  type = map(object({
+    vpc_id          = string
+    subnet_ids      = list(string)
+    route_table_ids = list(string)
+  }))
 }
 
 variable "kong_network_cidr" {
