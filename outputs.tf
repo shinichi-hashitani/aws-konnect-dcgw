@@ -91,6 +91,17 @@ output "test_task_security_group_id" {
   value       = module.test_tasks.security_group_id
 }
 
+# ----- DCGW プロキシ Private DNS -----
+output "gateway_private_dns_fqdn" {
+  description = "PHZ で private IP へ解決される DCGW プロキシ FQDN"
+  value       = module.gateway_dns.fqdn
+}
+
+output "gateway_private_dns_ips" {
+  description = "FQDN に登録した DCGW データプレーン内部 LB の private IP"
+  value       = module.gateway_dns.record_ips
+}
+
 output "test_run_task_hint" {
   description = "ECS コンソールでの疎通テスト実行手順 (概要)"
   value = join(" / ", [

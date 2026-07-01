@@ -259,13 +259,21 @@ variable "test_load_run_time" {
   default     = "5m"
 }
 
-variable "test_resolve_ip" {
+# --- DCGW プロキシ用 Private DNS (Route53 PHZ) ---
+
+variable "enable_gateway_private_dns" {
   description = <<-EOT
-    DCGW プロキシ FQDN を解決させるデータプレーンの private IP (Kong 網 CIDR 内)。
-    api_access=private では公開 DNS に FQDN が無いため、テストタスクはこの IP へ
-    FQDN を解決させて TGW 経由で到達する (疎通: curl --resolve / 負荷: getaddrinfo)。
-    Konnect UI / API で確認した値を指定 (例: "10.0.1.101")。空なら解決置換なし。
+    DCGW プロキシ FQDN を private IP へ解決する Route53 Private Hosted Zone を作成するか。
+    データプレーンが起動し private IP が確定してから有効化する (IP が空だとレコード
+    作成に失敗するため)。既定 true。まっさらな初回 apply 等で DP 未起動の場合は
+    false にし、DP 起動後に true で再 apply する。
   EOT
+  type        = bool
+  default     = true
+}
+
+variable "gateway_dns_zone_name" {
+  description = "DCGW プロキシ FQDN 解決用の Private Hosted Zone 名 (DCGW エッジのドメイン)"
   type        = string
-  default     = ""
+  default     = "gateways.konghq.com"
 }

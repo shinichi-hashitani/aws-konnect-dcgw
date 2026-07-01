@@ -29,27 +29,6 @@ variable "target_url" {
   default     = ""
 }
 
-variable "gateway_host" {
-  description = <<-EOT
-    DCGW プロキシの FQDN (例: fa1a8834f3.gateways.konghq.com)。
-    負荷テスト(Locust)で RESOLVE_HOST として使用し、resolve_ip と併せて FQDN を
-    private IP へ解決させる (getaddrinfo パッチ。SNI/Host は FQDN のまま保持)。
-  EOT
-  type        = string
-  default     = ""
-}
-
-variable "resolve_ip" {
-  description = <<-EOT
-    DCGW プロキシ FQDN を解決させるデータプレーンの private IP (Kong 網 CIDR 内)。
-    api_access=private では公開 DNS に FQDN が無いため、疎通テストは curl --resolve、
-    負荷テストは getaddrinfo パッチで FQDN をこの IP へ解決させる。空なら解決置換なし。
-    Konnect UI / API で確認した値を指定 (例: "10.0.1.101")。
-  EOT
-  type        = string
-  default     = ""
-}
-
 variable "request_count" {
   description = "疎通テストのリクエスト回数 (環境変数 REQUEST_COUNT の既定値)"
   type        = number

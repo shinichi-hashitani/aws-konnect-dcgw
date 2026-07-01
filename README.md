@@ -66,6 +66,7 @@ flowchart TB
     ├── app_vpc/                 # app-vpc: ECS Fargate (httpbin) + 内部 ALB
     ├── test_vpc/                # test-vpc: テスト実行用 VPC (ネットワークのみ)
     ├── test_tasks/              # test-vpc で実行するテスト ECS タスク (疎通 / 負荷)
+    ├── gateway_dns/             # DCGW プロキシ FQDN 解決用 Route53 Private Hosted Zone
     └── transit_gateway/         # TGW + RAM 共有 + app/test VPC アタッチ + ルート
 ```
 

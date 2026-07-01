@@ -30,27 +30,14 @@ locals {
     COUNT="$${REQUEST_COUNT:-10}"
     SLEEP_SECONDS="$${SLEEP_SECONDS:-1}"
     TIMEOUT_SECONDS="$${TIMEOUT_SECONDS:-10}"
-    RESOLVE_IP="$${RESOLVE_IP:-}"
 
-    # private 構成: FQDN が公開 DNS に無いため、RESOLVE_IP 指定時は curl --resolve で
-    # FQDN を private IP へ解決 (SNI/Host は FQDN のまま保持)。
-    RESOLVE_OPT=""
-    if [ -n "$RESOLVE_IP" ]; then
-      scheme=$${TARGET_URL%%://*}
-      rest=$${TARGET_URL#*://}
-      hostport=$${rest%%/*}
-      host=$${hostport%%:*}
-      if [ "$scheme" = "http" ]; then port=80; else port=443; fi
-      RESOLVE_OPT="--resolve $host:$port:$RESOLVE_IP"
-      echo "[connectivity] resolve $host:$port -> $RESOLVE_IP"
-    fi
-
+    # FQDN の名前解決は Route53 Private Hosted Zone (gateway_dns) が担う。
     echo "[connectivity] target=$TARGET_URL count=$COUNT timeout=$${TIMEOUT_SECONDS}s"
     ok=0
     ng=0
     i=1
     while [ "$i" -le "$COUNT" ]; do
-      code=$(curl -ksS $RESOLVE_OPT -o /dev/null -w '%%{http_code}' --max-time "$TIMEOUT_SECONDS" "$TARGET_URL" || echo 000)
+      code=$(curl -ksS -o /dev/null -w '%%{http_code}' --max-time "$TIMEOUT_SECONDS" "$TARGET_URL" || echo 000)
       if [ "$code" = "200" ]; then
         ok=$((ok + 1))
         echo "[$i/$COUNT] OK ($code)"
@@ -70,25 +57,13 @@ locals {
   # ※ Python コードには Terraform の補間記号 ${ } / %{ } を含めないこと。
   locustfile = <<-PY
     import os
-    import socket
     import urllib3
     from locust import HttpUser, task, between
 
     urllib3.disable_warnings()
 
+    # FQDN の名前解決は Route53 Private Hosted Zone (gateway_dns) が担う。
     TARGET_PATH = os.environ.get("TARGET_PATH", "/echo")
-
-    # private 構成: FQDN が公開 DNS に無いため、RESOLVE_HOST -> RESOLVE_IP を
-    # getaddrinfo でマップ (curl --resolve 相当。SNI/Host は FQDN のまま保持)。
-    RESOLVE_HOST = os.environ.get("RESOLVE_HOST", "")
-    RESOLVE_IP = os.environ.get("RESOLVE_IP", "")
-    if RESOLVE_HOST and RESOLVE_IP:
-        _orig_getaddrinfo = socket.getaddrinfo
-        def _patched_getaddrinfo(host, *args, **kwargs):
-            if host == RESOLVE_HOST:
-                host = RESOLVE_IP
-            return _orig_getaddrinfo(host, *args, **kwargs)
-        socket.getaddrinfo = _patched_getaddrinfo
 
     class EchoUser(HttpUser):
         wait_time = between(0.1, 0.5)
@@ -209,7 +184,6 @@ resource "aws_ecs_task_definition" "connectivity" {
       command    = [local.connectivity_script]
       environment = [
         { name = "TARGET_URL", value = var.target_url },
-        { name = "RESOLVE_IP", value = var.resolve_ip },
         { name = "REQUEST_COUNT", value = tostring(var.request_count) },
         { name = "SLEEP_SECONDS", value = tostring(var.sleep_seconds) },
         { name = "TIMEOUT_SECONDS", value = tostring(var.timeout_seconds) },
@@ -249,8 +223,6 @@ resource "aws_ecs_task_definition" "load" {
       environment = [
         { name = "TARGET_HOST", value = var.load_target_host },
         { name = "TARGET_PATH", value = var.load_target_path },
-        { name = "RESOLVE_HOST", value = var.gateway_host },
-        { name = "RESOLVE_IP", value = var.resolve_ip },
         { name = "USERS", value = tostring(var.load_users) },
         { name = "SPAWN_RATE", value = tostring(var.load_spawn_rate) },
         { name = "RUN_TIME", value = var.load_run_time },

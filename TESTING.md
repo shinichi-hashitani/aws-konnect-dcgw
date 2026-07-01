@@ -15,6 +15,13 @@ Run task 画面で上書き）。
 > タスク定義名・クラスタ名・サブネット・SG は `terraform output` で取得できます
 > （末尾「Run task に必要な値」参照）。
 
+> ⚠️ **重要: サブネットは必ず test-vpc の private サブネット
+> (`terraform output test_vpc_private_subnet_ids`) を選択してください。**
+> 別 VPC（デフォルト VPC 等）のサブネットで起動すると、DCGW プロキシ FQDN 解決用の
+> Route53 Private Hosted Zone が効かず `curl: (6) Could not resolve host` になります。
+> コンソールでの手動選択ミスを避けるには、末尾の CLI 例（`terraform output` から
+> サブネットを渡す）での実行が確実です。
+
 ## 1. 疎通テスト (connectivity)
 
 Kong (DCGW) 経由で app へ指定回数リクエストし、各レスポンスの HTTP ステータスを集計します。
@@ -32,22 +39,22 @@ Kong (DCGW) 経由で app へ指定回数リクエストし、各レスポンス
 > `TARGET_URL` は private DCGW のエンドポイントです。Terraform は DCGW のエッジ DNS
 > （FQDN）と公開パス（既定 `/echo`）から既定値を導出します。
 
-#### private 構成での名前解決（重要）
+#### private 構成での名前解決（Route53 Private Hosted Zone）
 
 `api_access = private` の DCGW は **公開 DNS に FQDN を持たない**ため、そのままでは
-`curl: (6) Could not resolve host` になります。本構成では **`var.test_resolve_ip` に
-データプレーンの private IP（Kong 網 CIDR 内）を指定**すると、テストタスクの `/etc/hosts`
-に **FQDN → private IP の host エイリアス（ECS `extraHosts`）**を追加し、TGW 経由で到達
-させます（疎通・負荷の両タスク共通）。
+`curl: (6) Could not resolve host` になります。本構成では **`gateway_dns` モジュールが
+自アカウントに Route53 Private Hosted Zone（`gateways.konghq.com`）を作成**し、
+app-vpc / test-vpc に関連付けて **FQDN → データプレーン内部 LB の private IP** に解決します。
 
-```hcl
-# terraform.tfvars
-test_resolve_ip = "10.0.1.101"   # Konnect UI / API で確認したデータプレーンの private IP
-```
+- private IP は `konnect_cloud_gateway_configuration` の `private_ip_addresses` 属性から
+  自動取得するため **手動指定は不要**。`terraform apply` のたびに最新化されます
+  （IP は「個別ノード」ではなく「内部 LB」の IP なので比較的安定）。
+- テストタスクは FQDN（`TARGET_URL` / `TARGET_HOST`）をそのまま使うだけで到達できます。
+- 確認: `terraform output gateway_private_dns_fqdn` / `terraform output gateway_private_dns_ips`
 
-> private IP の確認方法: Konnect UI（Gateway Manager → 対象 CP → Data Plane Nodes 等）、
-> または Konnect API（`GET https://global.api.konghq.com/v2/cloud-gateways/networks`）。
-> IP が変わった場合は `test_resolve_ip` を更新して `terraform apply` し直してください。
+> データプレーン未起動でまだ private IP が無い状態（まっさらな初回 apply 等）では、
+> 一時的に `enable_gateway_private_dns = false` にして apply し、DP 起動後に `true` で
+> 再 apply してください。
 
 ### AWS コンソールでの実行手順
 

@@ -118,6 +118,7 @@ module "test_tasks" {
   image       = var.test_client_image
 
   # 接続先 URL。test_target_url 指定時はそれを、未指定時は DCGW エッジ + 公開パスから導出。
+  # FQDN の名前解決は gateway_dns モジュールの Route53 PHZ が担う (private IP へ解決)。
   target_url    = var.test_target_url != "" ? var.test_target_url : try("https://${module.konnect_dcgw.public_edge_dns}${var.app_route_paths[0]}", "")
   request_count = var.test_request_count
 
@@ -128,11 +129,23 @@ module "test_tasks" {
   load_spawn_rate  = var.test_load_spawn_rate
   load_run_time    = var.test_load_run_time
 
-  # private 構成では DCGW の FQDN が公開 DNS に存在しないため、FQDN -> private IP の
-  # host エイリアスをタスクの /etc/hosts に追加して TGW 経由で到達させる。
-  # FQDN はエッジ DNS から導出、private IP は test_resolve_ip で指定 (Konnect UI/API で確認)。
-  gateway_host = try(module.konnect_dcgw.public_edge_dns, "")
-  resolve_ip   = var.test_resolve_ip
+  tags = var.tags
+}
+
+# -----------------------------------------------------------------------------
+# 6) DCGW プロキシ用 Route53 Private Hosted Zone
+#    private 構成では DCGW の FQDN が公開 DNS に無いため、自アカウントに PHZ を作り
+#    app-vpc / test-vpc に関連付けて FQDN をデータプレーン内部 LB の private IP へ解決。
+#    IP は konnect_cloud_gateway_configuration の属性から取得 (apply ごとに最新化)。
+# -----------------------------------------------------------------------------
+module "gateway_dns" {
+  source = "./modules/gateway_dns"
+
+  enabled     = var.enable_gateway_private_dns
+  zone_name   = var.gateway_dns_zone_name
+  record_name = try(module.konnect_dcgw.public_edge_dns, "")
+  record_ips  = try(module.konnect_dcgw.dataplane_private_ips, [])
+  vpc_ids     = [module.app_vpc.vpc_id, module.test_vpc.vpc_id]
 
   tags = var.tags
 }
