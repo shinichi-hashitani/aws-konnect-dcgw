@@ -10,11 +10,12 @@ terraform {
 locals {
   ram_enabled = var.kong_ram_principal_account_id != ""
 
-  # 各 VPC のルートテーブルを (vpc キー × ルートテーブル ID) で平坦化し、
-  # Kong ネットワーク CIDR 向けルートを一意キーで管理する。
+  # 各 VPC のルートテーブルを (vpc キー × インデックス) で平坦化し、Kong ネットワーク
+  # CIDR 向けルートを一意キーで管理する。キーはルートテーブル ID (apply 時まで不明) では
+  # なく静的な vpc キー + index を用いる (for_each のキーは plan 時に確定する必要があるため)。
   vpc_route_tables = merge([
     for k, v in var.vpc_attachments : {
-      for rt in v.route_table_ids : "${k}-${rt}" => rt
+      for idx, rt in v.route_table_ids : "${k}-${idx}" => rt
     }
   ]...)
 }

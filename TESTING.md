@@ -29,10 +29,25 @@ Kong (DCGW) 経由で app へ指定回数リクエストし、各レスポンス
 | `SLEEP_SECONDS` | `1` | 各リクエスト間の待機秒数 |
 | `TIMEOUT_SECONDS` | `10` | 1 リクエストのタイムアウト秒数 |
 
-> `TARGET_URL` は private DCGW のエンドポイントです。Terraform は DCGW のエッジ DNS と
-> 公開パス（既定 `/echo`）から既定値を導出しますが、private 構成でエッジが解決できない
-> 場合は `var.test_target_url` か Run task 画面の `TARGET_URL` で実際のエンドポイントを
-> 指定してください（Konnect UI / 構築結果で確認）。
+> `TARGET_URL` は private DCGW のエンドポイントです。Terraform は DCGW のエッジ DNS
+> （FQDN）と公開パス（既定 `/echo`）から既定値を導出します。
+
+#### private 構成での名前解決（重要）
+
+`api_access = private` の DCGW は **公開 DNS に FQDN を持たない**ため、そのままでは
+`curl: (6) Could not resolve host` になります。本構成では **`var.test_resolve_ip` に
+データプレーンの private IP（Kong 網 CIDR 内）を指定**すると、テストタスクの `/etc/hosts`
+に **FQDN → private IP の host エイリアス（ECS `extraHosts`）**を追加し、TGW 経由で到達
+させます（疎通・負荷の両タスク共通）。
+
+```hcl
+# terraform.tfvars
+test_resolve_ip = "10.0.1.101"   # Konnect UI / API で確認したデータプレーンの private IP
+```
+
+> private IP の確認方法: Konnect UI（Gateway Manager → 対象 CP → Data Plane Nodes 等）、
+> または Konnect API（`GET https://global.api.konghq.com/v2/cloud-gateways/networks`）。
+> IP が変わった場合は `test_resolve_ip` を更新して `terraform apply` し直してください。
 
 ### AWS コンソールでの実行手順
 

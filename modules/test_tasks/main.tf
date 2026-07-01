@@ -19,32 +19,50 @@ terraform {
 locals {
   # 疎通テスト: TARGET_URL へ REQUEST_COUNT 回リクエストし、200 以外を NG として集計。
   # NG が 1 件でもあれば非ゼロ終了 (タスク失敗) させ、コンソール上で失敗が分かるようにする。
-  # Terraform heredoc のため、シェル変数は $$、curl の書式 %{...} は %%{...} でエスケープ。
+  # Terraform heredoc のエスケープ規則:
+  #   - パラメータ展開 (${VAR:-x} / ${VAR:?x} など波括弧付き) は $${...} と書く (→ ${...})
+  #   - curl の書式 %{...} は %%{...} と書く (→ %{...})
+  #   - 波括弧なしのシェル展開 ($i, $code, $(...), $((...))) は単一の $ のまま
+  #     (Terraform は { を伴わない $ をそのまま出力する。$$ と書くとシェルの PID になり壊れる)
   connectivity_script = <<-SCRIPT
     set -eu
     : "$${TARGET_URL:?TARGET_URL must be set (e.g. https://<dcgw-edge>/echo)}"
     COUNT="$${REQUEST_COUNT:-10}"
     SLEEP_SECONDS="$${SLEEP_SECONDS:-1}"
     TIMEOUT_SECONDS="$${TIMEOUT_SECONDS:-10}"
+    RESOLVE_IP="$${RESOLVE_IP:-}"
 
-    echo "[connectivity] target=$${TARGET_URL} count=$${COUNT} timeout=$${TIMEOUT_SECONDS}s"
+    # private 構成: FQDN が公開 DNS に無いため、RESOLVE_IP 指定時は curl --resolve で
+    # FQDN を private IP へ解決 (SNI/Host は FQDN のまま保持)。
+    RESOLVE_OPT=""
+    if [ -n "$RESOLVE_IP" ]; then
+      scheme=$${TARGET_URL%%://*}
+      rest=$${TARGET_URL#*://}
+      hostport=$${rest%%/*}
+      host=$${hostport%%:*}
+      if [ "$scheme" = "http" ]; then port=80; else port=443; fi
+      RESOLVE_OPT="--resolve $host:$port:$RESOLVE_IP"
+      echo "[connectivity] resolve $host:$port -> $RESOLVE_IP"
+    fi
+
+    echo "[connectivity] target=$TARGET_URL count=$COUNT timeout=$${TIMEOUT_SECONDS}s"
     ok=0
     ng=0
     i=1
-    while [ "$$i" -le "$${COUNT}" ]; do
-      code=$$(curl -ksS -o /dev/null -w '%%{http_code}' --max-time "$${TIMEOUT_SECONDS}" "$${TARGET_URL}" || echo 000)
-      if [ "$$code" = "200" ]; then
-        ok=$$((ok + 1))
-        echo "[$$i/$${COUNT}] OK ($$code)"
+    while [ "$i" -le "$COUNT" ]; do
+      code=$(curl -ksS $RESOLVE_OPT -o /dev/null -w '%%{http_code}' --max-time "$TIMEOUT_SECONDS" "$TARGET_URL" || echo 000)
+      if [ "$code" = "200" ]; then
+        ok=$((ok + 1))
+        echo "[$i/$COUNT] OK ($code)"
       else
-        ng=$$((ng + 1))
-        echo "[$$i/$${COUNT}] NG ($$code)"
+        ng=$((ng + 1))
+        echo "[$i/$COUNT] NG ($code)"
       fi
-      i=$$((i + 1))
-      if [ "$$i" -le "$${COUNT}" ]; then sleep "$${SLEEP_SECONDS}"; fi
+      i=$((i + 1))
+      if [ "$i" -le "$COUNT" ]; then sleep "$SLEEP_SECONDS"; fi
     done
-    echo "[connectivity] result ok=$${ok} ng=$${ng} total=$${COUNT}"
-    [ "$$ng" -eq 0 ]
+    echo "[connectivity] result ok=$ok ng=$ng total=$COUNT"
+    [ "$ng" -eq 0 ]
   SCRIPT
 
   # 負荷テスト用 locustfile (Python)。/echo へ GET し続けるだけの単純なエコー負荷。
@@ -52,12 +70,25 @@ locals {
   # ※ Python コードには Terraform の補間記号 ${ } / %{ } を含めないこと。
   locustfile = <<-PY
     import os
+    import socket
     import urllib3
     from locust import HttpUser, task, between
 
     urllib3.disable_warnings()
 
     TARGET_PATH = os.environ.get("TARGET_PATH", "/echo")
+
+    # private 構成: FQDN が公開 DNS に無いため、RESOLVE_HOST -> RESOLVE_IP を
+    # getaddrinfo でマップ (curl --resolve 相当。SNI/Host は FQDN のまま保持)。
+    RESOLVE_HOST = os.environ.get("RESOLVE_HOST", "")
+    RESOLVE_IP = os.environ.get("RESOLVE_IP", "")
+    if RESOLVE_HOST and RESOLVE_IP:
+        _orig_getaddrinfo = socket.getaddrinfo
+        def _patched_getaddrinfo(host, *args, **kwargs):
+            if host == RESOLVE_HOST:
+                host = RESOLVE_IP
+            return _orig_getaddrinfo(host, *args, **kwargs)
+        socket.getaddrinfo = _patched_getaddrinfo
 
     class EchoUser(HttpUser):
         wait_time = between(0.1, 0.5)
@@ -178,6 +209,7 @@ resource "aws_ecs_task_definition" "connectivity" {
       command    = [local.connectivity_script]
       environment = [
         { name = "TARGET_URL", value = var.target_url },
+        { name = "RESOLVE_IP", value = var.resolve_ip },
         { name = "REQUEST_COUNT", value = tostring(var.request_count) },
         { name = "SLEEP_SECONDS", value = tostring(var.sleep_seconds) },
         { name = "TIMEOUT_SECONDS", value = tostring(var.timeout_seconds) },
@@ -217,6 +249,8 @@ resource "aws_ecs_task_definition" "load" {
       environment = [
         { name = "TARGET_HOST", value = var.load_target_host },
         { name = "TARGET_PATH", value = var.load_target_path },
+        { name = "RESOLVE_HOST", value = var.gateway_host },
+        { name = "RESOLVE_IP", value = var.resolve_ip },
         { name = "USERS", value = tostring(var.load_users) },
         { name = "SPAWN_RATE", value = tostring(var.load_spawn_rate) },
         { name = "RUN_TIME", value = var.load_run_time },

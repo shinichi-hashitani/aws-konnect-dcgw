@@ -118,8 +118,6 @@ module "test_tasks" {
   image       = var.test_client_image
 
   # 接続先 URL。test_target_url 指定時はそれを、未指定時は DCGW エッジ + 公開パスから導出。
-  # (private 構成ではエッジ DNS が private IP に解決され TGW 経由で到達する想定。
-  #  解決できない場合は Run task UI で TARGET_URL を上書きする)
   target_url    = var.test_target_url != "" ? var.test_target_url : try("https://${module.konnect_dcgw.public_edge_dns}${var.app_route_paths[0]}", "")
   request_count = var.test_request_count
 
@@ -129,6 +127,12 @@ module "test_tasks" {
   load_users       = var.test_load_users
   load_spawn_rate  = var.test_load_spawn_rate
   load_run_time    = var.test_load_run_time
+
+  # private 構成では DCGW の FQDN が公開 DNS に存在しないため、FQDN -> private IP の
+  # host エイリアスをタスクの /etc/hosts に追加して TGW 経由で到達させる。
+  # FQDN はエッジ DNS から導出、private IP は test_resolve_ip で指定 (Konnect UI/API で確認)。
+  gateway_host = try(module.konnect_dcgw.public_edge_dns, "")
+  resolve_ip   = var.test_resolve_ip
 
   tags = var.tags
 }

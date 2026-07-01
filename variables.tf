@@ -258,3 +258,14 @@ variable "test_load_run_time" {
   type        = string
   default     = "5m"
 }
+
+variable "test_resolve_ip" {
+  description = <<-EOT
+    DCGW プロキシ FQDN を解決させるデータプレーンの private IP (Kong 網 CIDR 内)。
+    api_access=private では公開 DNS に FQDN が無いため、テストタスクはこの IP へ
+    FQDN を解決させて TGW 経由で到達する (疎通: curl --resolve / 負荷: getaddrinfo)。
+    Konnect UI / API で確認した値を指定 (例: "10.0.1.101")。空なら解決置換なし。
+  EOT
+  type        = string
+  default     = ""
+}
